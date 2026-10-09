@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { SessionRow } from '../types'
-import { ago, folderName, look, parseSession, sortRows } from './parse'
+import { ago, firstLine, folderName, look, parseSession, sortRows } from './parse'
 
 // Claude Code writes one <pid>.json per running session into its config
 // folder's sessions/ directory. That file is the engine's own, not mod API.
@@ -14,6 +14,11 @@ const rows = atom({ plugin: 'sessions', key: 'rows' } as const, [])
 const sessionId = atom({ plugin: 'sessions', key: 'sessionId' } as const, '')
 const now = atom({ plugin: 'sessions', key: 'now' } as const, 0)
 const error = atom({ plugin: 'sessions', key: 'error' } as const, '')
+
+// The notes mod's list, read-only: mod panes open as tabs of one pane (#5),
+// so the open notes are shown here too. Undefined when notes isn't loaded.
+const notesRef = { plugin: 'notes', key: 'notes' } as const
+const NOTES_SHOWN = 8
 
 async function sessionsDir($: EngineInterface) {
   const config = await $.env.get('CLAUDE_CONFIG_DIR')
@@ -99,6 +104,8 @@ export const register: Register = on => {
     const at = await read($, now)
     const problem = await read($, error)
     const working = list.filter(row => row.status === 'busy').length
+    const allNotes = (await $.state.get(notesRef))?.value
+    const openNotes = (allNotes ?? []).filter(note => !note.done)
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -126,6 +133,23 @@ export const register: Register = on => {
             </Box>
           )
         })}
+        {allNotes !== undefined ? (
+          <Box flexDirection="column">
+            <Box flexDirection="row" gap={1}>
+              <Text color="claude" bold>{openNotes.length} open notes</Text>
+              <Text dimColor>· /notes to edit</Text>
+            </Box>
+            {openNotes.slice(0, NOTES_SHOWN).map(note => (
+              <Box key={`note-${note.id}`} flexDirection="row" gap={1}>
+                <Text color="suggestion">{folderName(note.cwd)}</Text>
+                <Text>{firstLine(note.text)}</Text>
+              </Box>
+            ))}
+            {openNotes.length > NOTES_SHOWN ? (
+              <Text dimColor>+{openNotes.length - NOTES_SHOWN} more</Text>
+            ) : null}
+          </Box>
+        ) : null}
       </Box>
     )
   })

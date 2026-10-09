@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { ago, look, parseSession, sortRows, STALE_MS } from './parse'
+import { ago, firstLine, look, parseSession, sortRows, STALE_MS } from './parse'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const PANE = { component: 'Pane', requestId: 'sessions', props: {} as never } as const
@@ -13,8 +13,17 @@ const NOW = Date.UTC(2026, 9, 9, 12, 0)
 const file = (pid: number, fields: Record<string, unknown>) =>
   JSON.stringify({ pid, sessionId: `s-${pid}`, cwd: `C:\\work\\p${pid}`, status: 'idle', updatedAt: NOW, ...fields })
 
-const setup = (on: On, files: Record<string, string>) => {
+type Note = { id: string; text: string; cwd: string; createdAt: number; done: boolean }
+const note = (id: string, text: string, done = false): Note => ({ id, text, cwd: 'C:\\work\\notes-app', createdAt: NOW, done })
+
+// `notes` stands for the notes mod's state; left out, that mod isn't loaded.
+const setup = (on: On, files: Record<string, string>, notes?: Note[]) => {
   const clock = mock.clock(on, { now: NOW })
+  on('state.get', ($, e, next) => {
+    const { plugin, key } = e as { plugin: string; key: string }
+    if (plugin !== 'notes' || key !== 'notes') return next(e)
+    return { value: { value: notes, version: notes === undefined ? 0 : 1 } } as never
+  })
   mock.env(on, { USERPROFILE: 'C:\\Users\\dev' })
   const panes: { id: string }[] = []
   let lists = 0
@@ -132,5 +141,41 @@ test('a missing sessions folder is reported, not thrown', async ($, on) => {
   await $.command.run({ command: 'sessions', args: '' } as never)
   const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
   expect(await ui.findAll({ type: 'Text', text: /No session folder found at \/home\/dev\/.claude\/sessions/ })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('firstLine finds the text a note opens with', () => {
+  expect(firstLine('<pasted_content id="1">\n\n## Plan\nmore')).toBe('Plan')
+  expect(firstLine('```bash\nrm -rf x\n```')).toBe('rm -rf x')
+  expect(firstLine(`- ${'a'.repeat(100)}`)).toHaveLength(80)
+})
+
+test('open notes show under the sessions, read-only, done ones left out', async ($, on) => {
+  const notes = [
+    note('n1', 'Ship the PR'),
+    note('n2', 'Already done', true),
+    ...Array.from({ length: 9 }, (_, i) => note(`m${i}`, `Note ${i}`)),
+  ]
+  setup(on, { '1.json': file(1, {}) }, notes)
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p1' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
+    expect(await ui.findAll({ type: 'Text', text: /^10 open notes$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^Ship the PR$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^Already done$/ })).toHaveLength(0)
+    expect(await ui.findAll({ type: 'Text', text: /^notes-app$/ })).toHaveLength(8)
+    expect(await ui.findAll({ type: 'Text', text: /^\+2 more$/ })).toHaveLength(1)
+    await ui.unmount()
+  }
+})
+
+test('without the notes mod there is no notes section', async ($, on) => {
+  setup(on, { '1.json': file(1, {}) })
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p1' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  expect(await ui.findAll({ type: 'Text', text: /open notes/ })).toHaveLength(0)
   await ui.unmount()
 })

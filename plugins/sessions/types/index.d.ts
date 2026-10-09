@@ -10,8 +10,19 @@ export type SessionRow = {
   entrypoint?: string
 }
 
+// The fields of a notes-mod note this mod reads (read-only) to show open
+// notes under the sessions, while mod panes can't sit side by side (#5).
+export type NoteSummary = {
+  id: string
+  text: string
+  cwd: string
+  createdAt: number
+  done: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
     sessions: { rows: SessionRow[]; sessionId: string; now: number; error: string }
+    notes: { notes: NoteSummary[] }
   }
 }

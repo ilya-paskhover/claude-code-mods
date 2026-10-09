@@ -69,14 +69,16 @@ Limits:
 - One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, its folder, and "this session" on your own row.
 - Working sessions sort first, then the most recently active.
 - The pane refreshes every 5 seconds while it is open and stops when you close it.
+- With the notes mod loaded, the pane also lists your open notes below the sessions (first line and folder, up to 8), read-only; `/notes` is still where you edit them. This is a stopgap until mod panes can sit side by side ([#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5)).
 
 Limits:
 
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
 - Only sessions running on this machine appear. Closed sessions and cloud sessions do not.
 - The pane can't switch to another session; it only shows them. Tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4).
-- Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
+- Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side, hence the read-only notes list above. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
 - A session that crashed can leave its file behind. A "working" row with no activity for 30 minutes shows dimmed as "working?".
+- The notes list is this session's copy of the notes mod's list: a note saved in another session appears here once you open `/notes` in this one.
 
 ## Developing
 
