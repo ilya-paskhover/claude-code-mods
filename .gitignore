@@ -1,0 +1,5 @@
+# Written by the Claude Code engine at every load
+.claude-plugin/types/
+
+# Local working notes
+TASKS.md

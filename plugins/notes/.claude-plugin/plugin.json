@@ -1,0 +1,10 @@
+{
+  "name": "notes",
+  "version": "0.1.0",
+  "description": "Save selected chat text (or typed text) with /note to a notes list shared across projects, shown in a side pane with done checkboxes.",
+  "author": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
+  "homepage": "https://github.com/ilya-paskhover/claude-code-mods",
+  "repository": "https://github.com/ilya-paskhover/claude-code-mods",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

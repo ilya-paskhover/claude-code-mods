@@ -1,0 +1,10 @@
+{
+  "name": "turn-pulse",
+  "version": "0.1.0",
+  "description": "A band above the prompt summarizing the last turn: duration, files edited (edits outside the working folder flagged), tool results, and the turn's share of the 5h and weekly usage limits. Live status line while Claude works.",
+  "author": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
+  "homepage": "https://github.com/ilya-paskhover/claude-code-mods",
+  "repository": "https://github.com/ilya-paskhover/claude-code-mods",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

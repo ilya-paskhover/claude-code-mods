@@ -1,0 +1,17 @@
+{
+  "name": "claude-code-mods",
+  "description": "Small Claude Code mods: a last-turn summary band and a cross-project notes pane.",
+  "owner": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
+  "plugins": [
+    {
+      "name": "turn-pulse",
+      "source": "./plugins/turn-pulse",
+      "description": "A band above the prompt summarizing the last turn: duration, files edited, tool results, usage-limit cost."
+    },
+    {
+      "name": "notes",
+      "source": "./plugins/notes",
+      "description": "Save chat text with /note and review it in a side pane with done checkboxes."
+    }
+  ]
+}
