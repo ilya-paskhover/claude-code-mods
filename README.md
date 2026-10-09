@@ -25,6 +25,8 @@ Answer `y` to add the marketplace (asked only the first time), then pick a scope
 
 ## turn-pulse
 
+![turn-pulse: the last-turn band above the prompt and the session total in the status line](docs/turn-pulse.png)
+
 A band labeled **◆ last turn** sits above the prompt after each turn:
 
 - **Duration** of the turn, in yellow past 2 minutes.
@@ -41,6 +43,8 @@ Limits:
 - Paths are compared case-insensitively. That is right on Windows but could misjudge an "outside" edit on a case-sensitive Linux file system.
 
 ## notes
+
+![notes: the Notes side pane with an open note](docs/notes.png)
 
 - `/note <text>` saves the typed text. With text selected in the transcript, `/note <comment>` saves the selection with the typed text as its comment.
 - Notes are kept in the mod's own store, shared across all sessions and projects.
