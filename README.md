@@ -59,6 +59,7 @@ Limits:
 Limits:
 
 - In the desktop app the selection is not passed to mods, so `/note` there needs pasted or typed text, and Jump never appears. Selection is documented to work in the fullscreen terminal; I have not verified that. Tracked in [#1](https://github.com/ilya-paskhover/claude-code-mods/issues/1).
+- Jump only scrolls within the session the note was taken in; mods can't open another session. Tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4).
 
 ## sessions
 
@@ -73,7 +74,8 @@ Limits:
 
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
 - Only sessions running on this machine appear. Closed sessions and cloud sessions do not.
-- The pane can't switch to another session; it only shows them.
+- The pane can't switch to another session; it only shows them. Tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4).
+- Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
 - A session that crashed can leave its file behind. A "working" row with no activity for 30 minutes shows dimmed as "working?".
 
 ## Developing
