@@ -55,7 +55,21 @@ export const ago = (ms: number) => {
   return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`
 }
 
-export type Look = { dot: string; label: string; color?: string; isDim: boolean }
+// One line standing for a note: its first line of text, past any pasted
+// wrapper, code fence or Markdown marker, cut to fit a pane row.
+const LINE_CHARS = 80
+
+export const firstLine = (text: string) => {
+  const line =
+    text
+      .replace(/<\/?pasted_content\b[^>]*>/g, '')
+      .split('\n')
+      .map(one => one.replace(/^\s*(```\S*|#+|[-*>]|\d+\.)\s*/, '').trim())
+      .find(one => one !== '') ?? ''
+  return line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS - 1)}…` : line
+}
+
+export type Look ={ dot: string; label: string; color?: string; isDim: boolean }
 
 export const look = (row: SessionRow, now: number): Look => {
   if (row.status === 'busy') {
