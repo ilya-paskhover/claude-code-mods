@@ -1,11 +1,12 @@
 # claude-code-mods
 
-Two small mods for [Claude Code](https://claude.com/claude-code), built on its function-hooks plugin API.
+Small mods for [Claude Code](https://claude.com/claude-code), built on its function-hooks plugin API.
 
 | Mod | What it does |
 | --- | --- |
 | [turn-pulse](plugins/turn-pulse) | A band above the prompt summarizing the last turn, plus a live status line while Claude works. |
 | [notes](plugins/notes) | `/note` saves chat text to a notes list shared across projects; `/notes` opens it in a side pane. |
+| [sessions](plugins/sessions) | `/sessions` opens a side pane listing the sessions running on this machine and whether each is working or idle. |
 
 > **Early access.** The mod API these use is marked EARLY ACCESS and may change between Claude Code releases. Built and tested on Claude Code 2.1.293, on Windows, in the desktop app's Code tab.
 
@@ -19,6 +20,10 @@ In a terminal Claude Code session, type one line per mod:
 
 ```
 /plugin install notes --marketplace ilya-paskhover/claude-code-mods
+```
+
+```
+/plugin install sessions --marketplace ilya-paskhover/claude-code-mods
 ```
 
 Answer `y` to add the marketplace (asked only the first time), then pick a scope. The user scope makes the mod load in every session, including sessions the desktop app starts. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
@@ -54,6 +59,24 @@ Limits:
 Limits:
 
 - In the desktop app the selection is not passed to mods, so `/note` there needs pasted or typed text, and Jump never appears. Selection is documented to work in the fullscreen terminal; I have not verified that. Tracked in [#1](https://github.com/ilya-paskhover/claude-code-mods/issues/1).
+- Jump only scrolls within the session the note was taken in; mods can't open another session. Tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4).
+
+## sessions
+
+`/sessions` opens a **Sessions** side pane listing every Claude Code session running on this machine, from any folder:
+
+- A count of running and working sessions, and a Refresh button.
+- One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, its folder, and "this session" on your own row.
+- Working sessions sort first, then the most recently active.
+- The pane refreshes every 5 seconds while it is open and stops when you close it.
+
+Limits:
+
+- The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
+- Only sessions running on this machine appear. Closed sessions and cloud sessions do not.
+- The pane can't switch to another session; it only shows them. Tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4).
+- Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
+- A session that crashed can leave its file behind. A "working" row with no activity for 30 minutes shows dimmed as "working?".
 
 ## Developing
 

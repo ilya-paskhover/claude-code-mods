@@ -1,0 +1,10 @@
+{
+  "name": "sessions",
+  "version": "0.1.0",
+  "description": "A side pane listing the Claude Code sessions running on this machine, all folders, with each one's status (working or idle) and last activity.",
+  "author": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
+  "homepage": "https://github.com/ilya-paskhover/claude-code-mods",
+  "repository": "https://github.com/ilya-paskhover/claude-code-mods",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

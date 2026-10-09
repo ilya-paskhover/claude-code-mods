@@ -1,7 +1,10 @@
 {
   "name": "claude-code-mods",
-  "description": "Small Claude Code mods: a last-turn summary band and a cross-project notes pane.",
-  "owner": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
+  "description": "Small Claude Code mods: a last-turn summary band, a cross-project notes pane, and a running-sessions pane.",
+  "owner": {
+    "name": "Ilya Paskhover",
+    "url": "https://github.com/ilya-paskhover"
+  },
   "plugins": [
     {
       "name": "turn-pulse",
@@ -12,6 +15,11 @@
       "name": "notes",
       "source": "./plugins/notes",
       "description": "Save chat text with /note and review it in a side pane with done checkboxes."
+    },
+    {
+      "name": "sessions",
+      "source": "./plugins/sessions",
+      "description": "A side pane listing the sessions running on this machine and their status."
     }
   ]
 }
