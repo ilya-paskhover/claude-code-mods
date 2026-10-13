@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { SessionRow } from '../types'
-import { ago, folderName, look, parseSession, sortRows, switchLink } from './parse'
+import { ago, look, parseSession, sortRows, switchLink } from './parse'
 
 // Claude Code writes one <pid>.json per running session into its config
 // folder's sessions/ directory. That file is the engine's own, not mod API.
@@ -134,7 +134,6 @@ export const register: Register = on => {
               <Box flexDirection="row" gap={1}>
                 <Text color={color} dimColor={isDim}>  {label}</Text>
                 <Text dimColor>· {ago(at - row.updatedAt)}</Text>
-                <Text color="suggestion" dimColor={isDim}>· {folderName(row.cwd)}</Text>
                 {row.id === current ? <Text dimColor>· this session</Text> : null}
               </Box>
             </Box>

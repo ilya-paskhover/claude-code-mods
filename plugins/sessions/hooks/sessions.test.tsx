@@ -74,7 +74,7 @@ test('ago and look', () => {
   expect(look({ ...busy, status: 'waiting' }, NOW).label).toBe('waiting')
 })
 
-test('/sessions lists every running session with status, folder and age', async ($, on) => {
+test('/sessions lists every running session with status and age, no folder', async ($, on) => {
   setup(on, {
     '1.json': file(1, { name: 'Fix login', updatedAt: NOW - 2 * 60_000 }),
     '2.json': file(2, { name: 'Publish mods', status: 'busy', hostSessionId: 'local_2' }),
@@ -93,7 +93,7 @@ test('/sessions lists every running session with status, folder and age', async 
     expect(names.map(n => (n as { text: string }).text)).toEqual(['Publish mods', 'Fix login'])
     expect(await ui.findAll({ type: 'Text', text: /^\s*working$/ })).toHaveLength(1)
     expect(await ui.findAll({ type: 'Text', text: /^· 2m$/ })).toHaveLength(1)
-    expect(await ui.findAll({ type: 'Text', text: /^· p1$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^· p[12]$/ })).toHaveLength(0)
     expect(await ui.findAll({ type: 'Text', text: /^· this session$/ })).toHaveLength(1)
     await ui.unmount()
   }
