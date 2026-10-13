@@ -121,6 +121,7 @@ export const register: Register = on => {
                 <Text color={color} dimColor={isDim}>  {label}</Text>
                 <Text dimColor>· {ago(at - row.updatedAt)}</Text>
                 <Text color="suggestion" dimColor={isDim}>· {folderName(row.cwd)}</Text>
+                <Text dimColor>· pid {row.pid}</Text>
                 {row.id === current ? <Text dimColor>· this session</Text> : null}
               </Box>
             </Box>
