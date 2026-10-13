@@ -12,21 +12,27 @@ Small mods for [Claude Code](https://claude.com/claude-code), built on its funct
 
 ## Install
 
-In a terminal Claude Code session, type one line per mod:
+In a terminal, add the marketplace once:
 
 ```
-/plugin install turn-pulse --marketplace ilya-paskhover/claude-code-mods
+claude plugin marketplace add ilya-paskhover/claude-code-mods
+```
+
+Then install one line per mod:
+
+```
+claude plugin install turn-pulse@claude-code-mods
 ```
 
 ```
-/plugin install notes --marketplace ilya-paskhover/claude-code-mods
+claude plugin install notes@claude-code-mods
 ```
 
 ```
-/plugin install sessions --marketplace ilya-paskhover/claude-code-mods
+claude plugin install sessions@claude-code-mods
 ```
 
-Answer `y` to add the marketplace (asked only the first time), then pick a scope. The user scope makes the mod load in every session, including sessions the desktop app starts. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
+This installs in the user scope, so the mod loads in every new session, including sessions the desktop app starts. Inside an interactive `claude` session, `/plugin marketplace add` and `/plugin install` take the same arguments. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
 
 ## turn-pulse
 
@@ -66,7 +72,8 @@ Limits:
 `/sessions` opens a **Sessions** side pane listing every Claude Code session running on this machine, from any folder:
 
 - A count of running and working sessions, and a Refresh button.
-- One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, its folder, its process ID (to find its terminal window), and "this session" on your own row.
+- One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, its folder, and "this session" on your own row.
+- A **Switch** button on each session the desktop app started opens that session in the app. It uses an undocumented `claude://` link, so a desktop update may break it; sessions started in a terminal have no button.
 - Working sessions sort first, then the most recently active.
 - The pane refreshes every 5 seconds while it is open and stops when you close it.
 

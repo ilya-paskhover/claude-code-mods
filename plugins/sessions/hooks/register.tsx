@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { SessionRow } from '../types'
-import { ago, folderName, look, parseSession, sortRows } from './parse'
+import { ago, folderName, look, parseSession, sortRows, switchLink } from './parse'
 
 // Claude Code writes one <pid>.json per running session into its config
 // folder's sessions/ directory. That file is the engine's own, not mod API.
@@ -47,6 +47,14 @@ async function refresh($: EngineInterface) {
   await update($, rows, () => found)
   await update($, error, () => problem)
   await update($, now, () => at)
+}
+
+// Hands the link to the OS, which passes it to the desktop app.
+async function openLink($: EngineInterface, url: string) {
+  const argv =
+    (await $.env.get('OS')) === 'Windows_NT' ? ['cmd', '/c', 'start', '', url] : ['open', url]
+  const ran = await $.process.run(argv).catch(() => undefined)
+  if (ran === undefined || ran.exitCode !== 0) $.ui.toast("Couldn't open that session in the desktop app.")
 }
 
 // Module variable on purpose: a reload drops timers, and session.start
@@ -111,17 +119,20 @@ export const register: Register = on => {
         {problem === '' && list.length === 0 ? <Text dimColor>No running sessions found.</Text> : null}
         {list.map(row => {
           const { dot, label, color, isDim } = look(row, at)
+          const link = row.id === current ? undefined : switchLink(row)
           return (
             <Box key={row.id} flexDirection="column">
               <Box flexDirection="row" gap={1}>
                 <Text color={color} dimColor={isDim}>{dot}</Text>
                 <Text bold={row.id === current} dimColor={isDim}>{row.name}</Text>
+                {link !== undefined ? (
+                  <Button key={`switch:${row.id}`} label="Switch" onPress={() => openLink($, link)} />
+                ) : null}
               </Box>
               <Box flexDirection="row" gap={1}>
                 <Text color={color} dimColor={isDim}>  {label}</Text>
                 <Text dimColor>· {ago(at - row.updatedAt)}</Text>
                 <Text color="suggestion" dimColor={isDim}>· {folderName(row.cwd)}</Text>
-                <Text dimColor>· pid {row.pid}</Text>
                 {row.id === current ? <Text dimColor>· this session</Text> : null}
               </Box>
             </Box>

@@ -31,8 +31,14 @@ export const parseSession = (text: string): SessionRow | undefined => {
     status: str(o.status) ?? 'unknown',
     updatedAt: num(o.updatedAt) ?? num(o.statusUpdatedAt) ?? num(o.startedAt) ?? 0,
     entrypoint: str(o.entrypoint),
+    hostSessionId: str(o.hostSessionId),
   }
 }
+
+// The desktop app opens a session it started from this link: undocumented,
+// found in the app's own "Continue Last Claude Code Session" shortcut.
+export const switchLink = (row: SessionRow) =>
+  row.hostSessionId === undefined ? undefined : `claude://code/continue?session=${encodeURIComponent(row.hostSessionId)}`
 
 // Working sessions first, then the most recently active; one row per session.
 export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
