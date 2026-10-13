@@ -116,8 +116,8 @@ test('Switch opens a desktop session from its link, never this one or a terminal
     await ui.unmount()
   }
   expect(runs).toEqual([
-    ['open', 'claude://code/continue?session=local_1'],
-    ['open', 'claude://code/continue?session=local_1'],
+    ['open', 'claude://claude.ai/epitaxy/local_1'],
+    ['open', 'claude://claude.ai/epitaxy/local_1'],
   ])
 })
 

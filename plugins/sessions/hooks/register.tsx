@@ -94,7 +94,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'sessions' }, async $ => {
     await refresh($)
-    await $.ui.open({ id: PANE, title: PANE_TITLE })
+    // Focused on open: unfocused, Switch took two clicks in the desktop app,
+    // likely the first giving the pane focus.
+    await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })
     startTicking($)
 
     return { text: 'Sessions pane opened.' }
