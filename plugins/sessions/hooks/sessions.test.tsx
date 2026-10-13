@@ -5,9 +5,14 @@ import { ago, look, parseSession, sortRows, STALE_MS } from './parse'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const PANE = { component: 'Pane', requestId: 'sessions', props: {} as never } as const
-// The engine hands fs hooks the path with the platform's separators.
+// The engine hands fs hooks the path with the platform's separators. Off Windows,
+// C:/ is not absolute, so the engine prefixes the mod folder; drop that prefix.
 const DIR = 'C:/Users/dev/.claude/sessions'
-const slashed = (e: unknown) => (e as { path: string }).path.replace(/\\/g, '/')
+const slashed = (e: unknown) => {
+  const path = (e as { path: string }).path.replace(/\\/g, '/')
+  const at = path.indexOf('C:/')
+  return at < 0 ? path : path.slice(at)
+}
 const NOW = Date.UTC(2026, 9, 9, 12, 0)
 
 const file = (pid: number, fields: Record<string, unknown>) =>
@@ -36,12 +41,17 @@ const setup = (on: On, files: Record<string, string>) => {
   on('session.id', () => ({ value: 's-2' }) as never)
   on('command.register', () => ({ value: undefined }) as never)
   on('session.start', ($, e) => ({ cwd: (e as { cwd: string }).cwd }) as never)
-  return { clock, panes, lists: () => lists }
+  const runs: string[][] = []
+  on('process.run', ($, e) => {
+    runs.push([...(e as { argv: string[] }).argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+  })
+  return { clock, panes, runs, lists: () => lists }
 }
 
 test('parse reads the fields it needs and refuses what it cannot use', () => {
   expect(parseSession(file(7, { name: 'Fix login' }))).toEqual({
-    id: 's-7', pid: 7, cwd: 'C:\\work\\p7', name: 'Fix login', status: 'idle', updatedAt: NOW, entrypoint: undefined,
+    id: 's-7', pid: 7, cwd: 'C:\\work\\p7', name: 'Fix login', status: 'idle', updatedAt: NOW, entrypoint: undefined, hostSessionId: undefined,
   })
   expect(parseSession(file(7, {}))!.name).toBe('p7')
   expect(parseSession('{not json')).toBeUndefined()
@@ -64,10 +74,10 @@ test('ago and look', () => {
   expect(look({ ...busy, status: 'waiting' }, NOW).label).toBe('waiting')
 })
 
-test('/sessions lists every running session with status, folder and age', async ($, on) => {
+test('/sessions lists every running session with status and age, no folder', async ($, on) => {
   setup(on, {
     '1.json': file(1, { name: 'Fix login', updatedAt: NOW - 2 * 60_000 }),
-    '2.json': file(2, { name: 'Publish mods', status: 'busy' }),
+    '2.json': file(2, { name: 'Publish mods', status: 'busy', hostSessionId: 'local_2' }),
     '3.json': '{broken',
     '1.abc.key': 'not a session',
   })
@@ -83,10 +93,32 @@ test('/sessions lists every running session with status, folder and age', async 
     expect(names.map(n => (n as { text: string }).text)).toEqual(['Publish mods', 'Fix login'])
     expect(await ui.findAll({ type: 'Text', text: /^\s*working$/ })).toHaveLength(1)
     expect(await ui.findAll({ type: 'Text', text: /^· 2m$/ })).toHaveLength(1)
-    expect(await ui.findAll({ type: 'Text', text: /^· p1$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^· p[12]$/ })).toHaveLength(0)
     expect(await ui.findAll({ type: 'Text', text: /^· this session$/ })).toHaveLength(1)
     await ui.unmount()
   }
+})
+
+test('Switch opens a desktop session from its link, never this one or a terminal one', async ($, on) => {
+  const { runs } = setup(on, {
+    '1.json': file(1, { name: 'Desktop one', hostSessionId: 'local_1' }),
+    '2.json': file(2, { name: 'This one', hostSessionId: 'local_2' }),
+    '3.json': file(3, { name: 'Terminal one' }),
+  })
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
+    const keys = (await ui.findAll({ type: 'Button' })).map(b => (b as { key: string }).key)
+    expect(keys.filter(key => key.startsWith('switch:'))).toEqual(['switch:s-1'])
+    await ui.press({ key: 'switch:s-1' })
+    await ui.unmount()
+  }
+  expect(runs).toEqual([
+    ['open', 'claude://claude.ai/epitaxy/local_1'],
+    ['open', 'claude://claude.ai/epitaxy/local_1'],
+  ])
 })
 
 test('the pane refreshes on a timer while it is open', async ($, on) => {

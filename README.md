@@ -12,21 +12,27 @@ Small mods for [Claude Code](https://claude.com/claude-code), built on its funct
 
 ## Install
 
-In a terminal Claude Code session, type one line per mod:
+In a terminal, add the marketplace once:
 
 ```
-/plugin install turn-pulse --marketplace ilya-paskhover/claude-code-mods
+claude plugin marketplace add ilya-paskhover/claude-code-mods
+```
+
+Then install one line per mod:
+
+```
+claude plugin install turn-pulse@claude-code-mods
 ```
 
 ```
-/plugin install notes --marketplace ilya-paskhover/claude-code-mods
+claude plugin install notes@claude-code-mods
 ```
 
 ```
-/plugin install sessions --marketplace ilya-paskhover/claude-code-mods
+claude plugin install sessions@claude-code-mods
 ```
 
-Answer `y` to add the marketplace (asked only the first time), then pick a scope. The user scope makes the mod load in every session, including sessions the desktop app starts. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
+This installs in the user scope, so the mod loads in every new session, including sessions the desktop app starts. Inside an interactive `claude` session, `/plugin marketplace add` and `/plugin install` take the same arguments. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
 
 ## turn-pulse
 
@@ -63,10 +69,13 @@ Limits:
 
 ## sessions
 
+![sessions: the Sessions side pane with two running sessions and a Switch button](docs/sessions.png)
+
 `/sessions` opens a **Sessions** side pane listing every Claude Code session running on this machine, from any folder:
 
 - A count of running and working sessions, and a Refresh button.
-- One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, its folder, and "this session" on your own row.
+- One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, and "this session" on your own row.
+- A **Switch** button on each session the desktop app started opens that session in the app. Sessions started in a terminal have no button.
 - Working sessions sort first, then the most recently active.
 - The pane refreshes every 5 seconds while it is open and stops when you close it.
 
@@ -74,7 +83,8 @@ Limits:
 
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
 - Only sessions running on this machine appear. Closed sessions and cloud sessions do not.
-- The pane can't switch to another session; it only shows them. Tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4).
+- Switch works only for sessions the desktop app started, through an undocumented `claude://` link, not a mod API (tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4)).
+- In the desktop app, a click on the pane first gives it focus, so a button may need two clicks: one to focus the pane, one to press. The pane opens focused, so the first click right after `/sessions` works; after you click elsewhere, click anywhere in the pane (or Refresh) first. Press Esc to give the keyboard back to the prompt.
 - Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
 - A session that crashed can leave its file behind. A "working" row with no activity for 30 minutes shows dimmed as "working?".
 
