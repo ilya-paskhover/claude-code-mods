@@ -73,7 +73,7 @@ Limits:
 
 - A count of running and working sessions, and a Refresh button.
 - One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, its folder, and "this session" on your own row.
-- A **Switch** button on each session the desktop app started opens that session in the app. It uses an undocumented `claude://` link, so a desktop update may break it; sessions started in a terminal have no button.
+- A **Switch** button on each session the desktop app started opens that session in the app. Sessions started in a terminal have no button.
 - Working sessions sort first, then the most recently active.
 - The pane refreshes every 5 seconds while it is open and stops when you close it.
 
@@ -81,7 +81,8 @@ Limits:
 
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
 - Only sessions running on this machine appear. Closed sessions and cloud sessions do not.
-- The pane can't switch to another session; it only shows them. Tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4).
+- Switch works only for sessions the desktop app started, through an undocumented `claude://` link, not a mod API (tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4)).
+- In the desktop app, a click on the pane first gives it focus, so a button may need two clicks: one to focus the pane, one to press. The pane opens focused, so the first click right after `/sessions` works; after you click elsewhere, click anywhere in the pane (or Refresh) first. Press Esc to give the keyboard back to the prompt.
 - Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
 - A session that crashed can leave its file behind. A "working" row with no activity for 30 minutes shows dimmed as "working?".
 
