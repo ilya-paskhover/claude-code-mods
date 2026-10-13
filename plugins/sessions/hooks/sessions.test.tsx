@@ -5,9 +5,14 @@ import { ago, look, parseSession, sortRows, STALE_MS } from './parse'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const PANE = { component: 'Pane', requestId: 'sessions', props: {} as never } as const
-// The engine hands fs hooks the path with the platform's separators.
+// The engine hands fs hooks the path with the platform's separators. Off Windows,
+// C:/ is not absolute, so the engine prefixes the mod folder; drop that prefix.
 const DIR = 'C:/Users/dev/.claude/sessions'
-const slashed = (e: unknown) => (e as { path: string }).path.replace(/\\/g, '/')
+const slashed = (e: unknown) => {
+  const path = (e as { path: string }).path.replace(/\\/g, '/')
+  const at = path.indexOf('C:/')
+  return at < 0 ? path : path.slice(at)
+}
 const NOW = Date.UTC(2026, 9, 9, 12, 0)
 
 const file = (pid: number, fields: Record<string, unknown>) =>
