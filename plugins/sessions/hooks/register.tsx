@@ -14,6 +14,9 @@ const rows = atom({ plugin: 'sessions', key: 'rows' } as const, [])
 const sessionId = atom({ plugin: 'sessions', key: 'sessionId' } as const, '')
 const now = atom({ plugin: 'sessions', key: 'now' } as const, 0)
 const error = atom({ plugin: 'sessions', key: 'error' } as const, '')
+// In $.state, not a module variable: a reload fires session.start again and
+// must not reopen a pane the person closed.
+const autoOpened = atom({ plugin: 'sessions', key: 'autoOpened' } as const, false)
 
 async function sessionsDir($: EngineInterface) {
   const config = await $.env.get('CLAUDE_CONFIG_DIR')
@@ -75,6 +78,19 @@ function startTicking($: EngineInterface) {
   })
 }
 
+// Once per session: the desktop app attaches again on every reconnect. Cloud
+// sessions are skipped; the pane lists this machine's sessions only.
+async function autoOpen($: EngineInterface) {
+  if ((await $.env.get('CLAUDE_CODE_REMOTE')) === 'true') return
+  if (await read($, autoOpened)) return
+  await update($, autoOpened, () => true)
+  await refresh($)
+  // Unfocused, so the prompt keeps the keyboard. Unasked, the engine draws a
+  // pane only from 144 columns; narrower, it waits for /sessions.
+  await $.ui.open({ id: PANE, title: PANE_TITLE })
+  startTicking($)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -88,8 +104,18 @@ export const register: Register = on => {
       await refresh($)
       startTicking($)
     }
+    if (e.surface === 'terminal') await autoOpen($)
 
     return next(e)
+  })
+
+  // The desktop app runs the session headless: at session.start nothing draws
+  // yet, so its first chance at the pane is when it attaches. Opened after
+  // next, once the app is on the session's roster of surfaces.
+  on('session.attach', async ($, e, next) => {
+    const attached = await next(e)
+    if (e.surface === 'desktop') await autoOpen($)
+    return attached
   })
 
   on('command.run', { command: 'sessions' }, async $ => {

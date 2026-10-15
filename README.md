@@ -78,8 +78,11 @@ Limits:
 - A **Switch** button on each session the desktop app started opens that session in the app. Sessions started in a terminal have no button.
 - Working sessions sort first, then the most recently active.
 - The pane refreshes every 5 seconds while it is open and stops when you close it.
+- The pane opens by itself once per local session: at start in a terminal, or when the desktop app connects. It opens unfocused, so the prompt keeps the keyboard. Close it and it stays closed for that session, through reloads and desktop reconnects.
 
 Limits:
+
+- Opened by itself, the pane shows only in a window at least 144 columns wide. In a narrower one it waits until you run `/sessions`. Cloud sessions (`CLAUDE_CODE_REMOTE=true`) never open it by themselves.
 
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
 - Only sessions running on this machine appear. Closed sessions and cloud sessions do not.
