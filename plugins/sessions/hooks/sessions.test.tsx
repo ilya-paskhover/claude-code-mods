@@ -18,10 +18,11 @@ const NOW = Date.UTC(2026, 9, 9, 12, 0)
 const file = (pid: number, fields: Record<string, unknown>) =>
   JSON.stringify({ pid, sessionId: `s-${pid}`, cwd: `C:\\work\\p${pid}`, status: 'idle', updatedAt: NOW, ...fields })
 
-const setup = (on: On, files: Record<string, string>) => {
+const setup = (on: On, files: Record<string, string>, env: Record<string, string> = {}) => {
   const clock = mock.clock(on, { now: NOW })
-  mock.env(on, { USERPROFILE: 'C:\\Users\\dev' })
+  mock.env(on, { USERPROFILE: 'C:\\Users\\dev', ...env })
   const panes: { id: string }[] = []
+  const opens: { id: string; focus?: boolean }[] = []
   let lists = 0
   on('fs.list', ($, e) => {
     lists++
@@ -34,20 +35,25 @@ const setup = (on: On, files: Record<string, string>) => {
     return { value: files[name] } as never
   })
   on('ui.open', ($, e) => {
-    panes.push({ id: (e as { id: string }).id })
+    const { id, focus } = e as { id: string; focus?: boolean }
+    opens.push({ id, focus })
+    panes.push({ id })
     return { value: { isPlaced: true } } as never
   })
   on('ui.panes', () => ({ value: panes.map(p => ({ ...p, title: 'Sessions', isShown: true, isFocused: false })) }) as never)
   on('session.id', () => ({ value: 's-2' }) as never)
   on('command.register', () => ({ value: undefined }) as never)
   on('session.start', ($, e) => ({ cwd: (e as { cwd: string }).cwd }) as never)
+  on('session.attach', ($, e) => ({ clientId: (e as { clientId: string }).clientId }) as never)
   const runs: string[][] = []
   on('process.run', ($, e) => {
     runs.push([...(e as { argv: string[] }).argv])
     return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
   })
-  return { clock, panes, runs, lists: () => lists }
+  return { clock, panes, opens, runs, lists: () => lists }
 }
+
+const attach = (surface: 'desktop' | 'mobile') => ({ surface, clientId: `${surface}:default` }) as never
 
 test('parse reads the fields it needs and refuses what it cannot use', () => {
   expect(parseSession(file(7, { name: 'Fix login' }))).toEqual({
@@ -138,6 +144,39 @@ test('the pane refreshes on a timer while it is open', async ($, on) => {
   const after = lists()
   await clock.advance(20_000)
   expect(lists()).toBe(after)
+})
+
+test('a terminal session opens the pane unfocused, once, and a reload keeps it closed', async ($, on) => {
+  const { panes, opens } = setup(on, { '1.json': file(1, { name: 'Fix login' }) })
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p1', surface: 'terminal' } as never)
+  expect(opens).toEqual([{ id: 'sessions', focus: undefined }])
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  expect(await ui.findAll({ type: 'Text', text: /^Fix login$/ })).toHaveLength(1)
+  await ui.unmount()
+
+  panes.length = 0
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p1', surface: 'terminal' } as never)
+  expect(opens).toHaveLength(1)
+})
+
+test('the desktop app opens the pane when it attaches, not again on a reconnect', async ($, on) => {
+  const { panes, opens } = setup(on, {})
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p1', surface: null } as never)
+  await $.session.attach(attach('mobile'))
+  expect(opens).toHaveLength(0)
+
+  await $.session.attach(attach('desktop'))
+  expect(opens).toEqual([{ id: 'sessions', focus: undefined }])
+  panes.length = 0
+  await $.session.attach(attach('desktop'))
+  expect(opens).toHaveLength(1)
+})
+
+test('a cloud session never opens the pane unasked', async ($, on) => {
+  const { opens } = setup(on, {}, { CLAUDE_CODE_REMOTE: 'true' })
+  await $.session.start({ source: 'startup', cwd: '/w', surface: 'terminal' } as never)
+  await $.session.attach(attach('desktop'))
+  expect(opens).toHaveLength(0)
 })
 
 test('says so when no file can be read or the folder is missing', async ($, on) => {

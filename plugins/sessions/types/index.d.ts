@@ -14,6 +14,6 @@ export type SessionRow = {
 
 declare module 'claude-code' {
   interface PluginState {
-    sessions: { rows: SessionRow[]; sessionId: string; now: number; error: string }
+    sessions: { rows: SessionRow[]; sessionId: string; now: number; error: string; autoOpened: boolean }
   }
 }
