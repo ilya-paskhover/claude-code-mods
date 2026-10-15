@@ -82,7 +82,7 @@ Limits:
 
 Limits:
 
-- Opened by itself, the pane shows only in a window at least 144 columns wide. In a narrower one it waits until you run `/sessions`. Cloud sessions don't open it by themselves, since the pane would list only that one session; `/sessions` still works there.
+- Opened by itself, the pane shows only in a window at least 144 columns wide, or 110 once you have opened it with `/sessions`. In a narrower one it waits until you run `/sessions`. Cloud sessions don't open it by themselves, since the pane would list only that one session; `/sessions` still works there.
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
 - Only sessions running on this machine appear. Closed sessions and cloud sessions do not.
 - Switch works only for sessions the desktop app started, through an undocumented `claude://` link, not a mod API (tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4)).

@@ -86,7 +86,8 @@ async function autoOpen($: EngineInterface) {
   await update($, autoOpened, () => true)
   await refresh($)
   // Unfocused, so the prompt keeps the keyboard. Unasked, the engine draws a
-  // pane only from 144 columns; narrower, it waits for /sessions.
+  // pane only from 144 columns, or 110 once /sessions has opened it; narrower,
+  // it waits for /sessions.
   await $.ui.open({ id: PANE, title: PANE_TITLE })
   startTicking($)
 }
