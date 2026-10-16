@@ -1,6 +1,6 @@
 {
   "name": "sessions",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A side pane listing the Claude Code sessions running on this machine, all folders, with each one's status (working or idle), last activity and a Switch button for desktop sessions.",
   "author": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
   "homepage": "https://github.com/ilya-paskhover/claude-code-mods",
