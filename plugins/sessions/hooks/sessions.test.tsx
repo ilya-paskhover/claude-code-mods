@@ -57,7 +57,7 @@ const attach = (surface: 'desktop' | 'mobile') => ({ surface, clientId: `${surfa
 
 test('parse reads the fields it needs and refuses what it cannot use', () => {
   expect(parseSession(file(7, { name: 'Fix login' }))).toEqual({
-    id: 's-7', pid: 7, cwd: 'C:\\work\\p7', name: 'Fix login', status: 'idle', updatedAt: NOW, entrypoint: undefined, hostSessionId: undefined,
+    id: 's-7', pid: 7, cwd: 'C:\\work\\p7', name: 'Fix login', status: 'idle', updatedAt: NOW, hostSessionId: undefined,
   })
   expect(parseSession(file(7, {}))!.name).toBe('p7')
   expect(parseSession('{not json')).toBeUndefined()
