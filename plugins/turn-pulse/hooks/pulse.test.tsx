@@ -38,7 +38,7 @@ test('band shows time, edits inside the folder and failed tools', async ($, on) 
   await clock.advance(42_000)
   await $.turn.complete({ reason: 'answer' } as never)
 
-  expect(toasts).toHaveLength(0)
+  expect(toasts).toEqual([])
   expect(statuses).toContain('▶ Bash · 1 ok · ✗ 1 failed')
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'turn-pulse', surface, component: 'AbovePrompt', props: {} as never })
@@ -150,4 +150,49 @@ test('/pulse elsewhere hides and shows the band', async ($, on) => {
   const shown = await $.ui.mount({ plugin: 'turn-pulse', surface: 'terminal', component: 'AbovePrompt', props: {} as never })
   expect(await shown.findAll({ type: 'Text', text: /last turn/ })).toHaveLength(1)
   await shown.unmount()
+})
+
+test('a notebook edit outside the folder is flagged', async ($, on) => {
+  const { toasts } = setup(on)
+
+  await $.prompt.submit({ text: 'hi' } as never)
+  await $.tool.call({ tool: 'NotebookEdit', notebook_path: 'C:\\other\\nb.ipynb', new_source: 'x' } as never)
+  await $.turn.complete({ reason: 'answer' } as never)
+
+  expect(toasts).toHaveLength(1)
+  expect(toasts[0]).toContain('nb.ipynb')
+})
+
+test('a folder that only shares a name prefix is outside', async ($, on) => {
+  const { toasts } = setup(on)
+
+  await $.prompt.submit({ text: 'hi' } as never)
+  await $.tool.call({ tool: 'Write', file_path: 'D:\\proj-old\\x.ts', content: '' } as never)
+  await $.turn.complete({ reason: 'answer' } as never)
+
+  expect(toasts).toHaveLength(1)
+  expect(toasts[0]).toContain('proj-old')
+})
+
+test('a turn that ends without a start, as after a reload, leaves no bogus time', async ($, on) => {
+  const { clock, toasts } = setup(on)
+  await clock.advance(Date.UTC(2026, 9, 9))
+
+  await $.turn.complete({ reason: 'answer' } as never)
+
+  expect(toasts).toEqual([])
+})
+
+test('limits: a window that drops without a new reset time still carries what it used', async ($, on) => {
+  const { statuses, usage } = setup(on)
+  usage.limits = [{ kind: 'five_hour', percentUsed: 30 }]
+
+  await $.prompt.submit({ text: 'one' } as never)
+  usage.limits = [{ kind: 'five_hour', percentUsed: 34 }]
+  await $.turn.complete({ reason: 'answer' } as never)
+
+  await $.prompt.submit({ text: 'two' } as never)
+  usage.limits = [{ kind: 'five_hour', percentUsed: 2 }]
+  await $.turn.complete({ reason: 'answer' } as never)
+  expect(statuses.at(-1)).toBe('session: 5h +6%')
 })

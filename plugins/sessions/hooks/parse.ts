@@ -30,7 +30,6 @@ export const parseSession = (text: string): SessionRow | undefined => {
     name: str(o.name) ?? (cwd !== '' ? folderName(cwd) : id.slice(0, 8)),
     status: str(o.status) ?? 'unknown',
     updatedAt: num(o.updatedAt) ?? num(o.statusUpdatedAt) ?? num(o.startedAt) ?? 0,
-    entrypoint: str(o.entrypoint),
     hostSessionId: str(o.hostSessionId),
   }
 }

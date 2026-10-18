@@ -127,7 +127,8 @@ export const register: Register = on => {
       failed[e.tool] = (failed[e.tool] ?? 0) + 1
     } else if (ran.deny === undefined) {
       ok += 1
-      const path = (e as { file_path?: unknown }).file_path
+      const { file_path, notebook_path } = e as { file_path?: unknown; notebook_path?: unknown }
+      const path = file_path ?? notebook_path
       if (EDITING.has(e.tool) && typeof path === 'string') {
         files.set(normalize(path), { name: baseName(path), path, isOutside: isOutsideOf(cwd, path) })
       }
@@ -138,6 +139,8 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    // A reload mid-turn drops startedAt and the counts: there is no turn to report.
+    if (!inTurn) return next(e)
     inTurn = false
     const seconds = Math.round(((await $.clock.now()) - startedAt) / 1000)
     const spentNow = await measure($)
