@@ -44,6 +44,13 @@ const BUCKETS: Record<string, string> = {
   failed: 'failed',
 }
 
+// needs_action sits in external_metadata.post_turn_summary; the top-level
+// post_turn_summary has been seen without it.
+const needsAction = (holder: unknown) => {
+  const summary = (holder as { post_turn_summary?: unknown } | null | undefined)?.post_turn_summary
+  return str((summary as { needs_action?: unknown } | null | undefined)?.needs_action)
+}
+
 const cloudRow = (item: unknown): SessionRow | undefined => {
   if (typeof item !== 'object' || item === null) return undefined
   const o = item as Record<string, unknown>
@@ -57,7 +64,7 @@ const cloudRow = (item: unknown): SessionRow | undefined => {
     status: BUCKETS[bucket] ?? bucket,
     updatedAt: num(Date.parse(str(o.updated_at) ?? '')) ?? 0,
     url: `https://claude.ai/code/${encodeURIComponent(id)}`,
-    needs: str((o.post_turn_summary as { needs_action?: unknown } | null | undefined)?.needs_action),
+    needs: needsAction(o.external_metadata) ?? needsAction(o),
   }
 }
 

@@ -204,14 +204,16 @@ const cloudSetup = (on: On, sessions: unknown[]) => {
 }
 
 test('parse reads a cloud session list, envelope and all', () => {
-  const blocked = { status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED', post_turn_summary: { needs_action: 'Approve the push' } }
+  const blocked = { status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED', external_metadata: { post_turn_summary: { needs_action: 'Approve the push' } } }
   expect(parseCloudSessions(listing([
     cloudSession('A', { status_bucket: 'SESSION_STATUS_BUCKET_WORKING' }),
     cloudSession('B', blocked),
+    cloudSession('C', { post_turn_summary: { status_category: 'completed' }, external_metadata: { post_turn_summary: { needs_action: '' } } }),
     { title: 'no id' },
   ]))).toEqual([
     { id: 'session_A', cwd: '', name: 'Task A', status: 'busy', updatedAt: NOW, url: 'https://claude.ai/code/session_A', needs: undefined },
     { id: 'session_B', cwd: '', name: 'Task B', status: 'blocked', updatedAt: NOW, url: 'https://claude.ai/code/session_B', needs: 'Approve the push' },
+    { id: 'session_C', cwd: '', name: 'Task C', status: 'idle', updatedAt: NOW, url: 'https://claude.ai/code/session_C', needs: undefined },
   ])
   expect(parseCloudSessions('no json here')).toBeUndefined()
   expect(parseCloudSessions('{"ccr":{}}')).toBeUndefined()
@@ -221,7 +223,7 @@ test('parse reads a cloud session list, envelope and all', () => {
 test('a cloud session lists recent cloud sessions with an Open link and what each needs', async ($, on) => {
   const { calls, lists } = cloudSetup(on, [
     cloudSession('A', { status_bucket: 'SESSION_STATUS_BUCKET_WORKING' }),
-    cloudSession('B', { status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED', post_turn_summary: { needs_action: 'Approve the push' } }),
+    cloudSession('B', { status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED', external_metadata: { post_turn_summary: { needs_action: 'Approve the push' } } }),
     cloudSession('C', { updated_at: new Date(NOW - 3 * 3_600_000).toISOString() }),
   ])
   await $.session.start({ source: 'startup', cwd: '/w' } as never)
