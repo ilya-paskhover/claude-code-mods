@@ -7,7 +7,6 @@ export type SessionRow = {
   cwd: string
   status: string
   updatedAt: number
-  entrypoint?: string
   // The desktop app's id for a session it started: what a switch link opens.
   hostSessionId?: string
 }
