@@ -109,3 +109,36 @@ test('limits: the turn cost goes in the band, the session total in the status li
     await ui.unmount()
   }
 })
+
+test('/pulse prints the last turn and the session total; hide and show set the band', async ($, on) => {
+  const { clock, usage } = setup(on)
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine band</Text>
+  })
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe('No turn has finished yet.')
+
+  usage.limits = [{ kind: 'five_hour', percentUsed: 10, resetsAt: 'A' }]
+  await $.prompt.submit({ text: 'hi' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: 'd:/proj/src/app.ts', old_string: 'a', new_string: 'b' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'false' } as never)
+  await clock.advance(42_000)
+  usage.limits = [{ kind: 'five_hour', percentUsed: 11, resetsAt: 'A' }]
+  await $.turn.complete({ reason: 'answer' } as never)
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe(
+    '◆ last turn · ⏱ 42s · ✎ app.ts · ✓ 1 ok · ✗ 1 failed (Bash) · 5h +1%\nsession: 5h +1%',
+  )
+
+  expect((await $.command.run({ command: 'pulse', args: 'hide' } as never)).text).toBe('Turn pulse band hidden.')
+  const hidden = await $.ui.mount({ plugin: 'turn-pulse', surface: 'terminal', component: 'AbovePrompt', props: {} as never })
+  expect(await hidden.findAll({ type: 'Text', text: /last turn/ })).toHaveLength(0)
+  expect(await hidden.findAll({ type: 'Text', text: 'engine band' })).toHaveLength(1)
+  await hidden.unmount()
+
+  expect((await $.command.run({ command: 'pulse', args: 'show' } as never)).text).toBe('Turn pulse band shown.')
+  const shown = await $.ui.mount({ plugin: 'turn-pulse', surface: 'terminal', component: 'AbovePrompt', props: {} as never })
+  expect(await shown.findAll({ type: 'Text', text: /last turn/ })).toHaveLength(1)
+  await shown.unmount()
+})

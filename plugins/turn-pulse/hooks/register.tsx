@@ -77,6 +77,25 @@ function idleStatus($: EngineInterface, spent: Record<string, number>) {
   $.ui.status(Object.keys(spent).length > 0 ? `session: ${formatSpent(spent)}` : undefined)
 }
 
+// The band's content as one line, for /pulse.
+function summarize(pulse: Pulse) {
+  const outside = pulse.files.filter(file => file.isOutside)
+  const inside = pulse.files.filter(file => !file.isOutside)
+  const fails = countFails(pulse.failed)
+  const failures = Object.entries(pulse.failed)
+    .map(([tool, n]) => (n > 1 ? `${tool} ×${n}` : tool))
+    .join(', ')
+  const spent = pulse.spent ?? {}
+  const parts = [`◆ last turn`, `⏱ ${formatTime(pulse.seconds)}`]
+  if (outside.length > 0) parts.push(`⚠ outside: ${outside.map(file => file.path).join(', ')}`)
+  if (inside.length > 0) parts.push(`✎ ${inside.map(file => file.name).join(', ')}`)
+  if (pulse.files.length === 0) parts.push('no edits')
+  parts.push(`✓ ${pulse.ok} ok`)
+  if (fails > 0) parts.push(`✗ ${fails} failed (${failures})`)
+  if (Object.keys(spent).length > 0) parts.push(formatSpent(spent))
+  return parts.join(' · ')
+}
+
 export const register: Register = on => {
   let cwd = ''
   let startedAt = 0
@@ -150,15 +169,28 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Prints the last turn as text, which reaches every surface; `hide` and
+  // `show` set the band.
   on('command.run', { command: 'pulse' }, async ($, e, next) => {
-    const hidden = await read($, isHidden)
-    await update($, isHidden, () => !hidden)
+    const arg = (e.args ?? '').trim().toLowerCase()
+    if (arg === 'hide' || arg === 'show') {
+      await update($, isHidden, () => arg === 'hide')
+      return { text: arg === 'hide' ? 'Turn pulse band hidden.' : 'Turn pulse band shown.' }
+    }
 
-    return { text: hidden ? 'Turn pulse band shown.' : 'Turn pulse band hidden.' }
+    const pulse = await read($, last)
+    const spent = sessionSpent(await read($, windows))
+    const lines = [pulse !== null && typeof pulse.ok === 'number' ? summarize(pulse) : 'No turn has finished yet.']
+    if (Object.keys(spent).length > 0) lines.push(`session: ${formatSpent(spent)}`)
+    return { text: lines.join('\n') }
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'pulse', description: 'Show or hide the turn pulse band' })
+    await $.command.register({
+      name: 'pulse',
+      description: 'Print the last turn summary, or hide or show the band',
+      argumentHint: '[hide|show]',
+    })
     idleStatus($, await measure($))
 
     return next(e)
