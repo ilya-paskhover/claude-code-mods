@@ -45,7 +45,7 @@ A band labeled **◆ last turn** sits above the prompt after each turn:
 - **Tool results**: `✓ N ok`, and `✗ N failed (Tool ×n)` when something failed.
 - **Usage-limit cost** of the turn, for example `5h +1% · week +0.3%`.
 
-The status line shows `▶ Tool · N ok · ✗ N failed` live during a turn, and `session: 5h +6% · week +2%` between turns. A toast appears when a turn takes 60 seconds or more. `/pulse` prints the last turn and the session total as text, which also shows in the Claude app and in cloud sessions, where the band and status line are not drawn. `/pulse hide` and `/pulse show` hide or show the band.
+The status line shows `▶ Tool · N ok · ✗ N failed` live during a turn, and `session: 5h +6% · week +2%` between turns. A toast appears when a turn takes 60 seconds or more. `/pulse` hides or shows the band. In a cloud session, where the band and status line are not drawn, `/pulse` prints the last turn and the session total as text instead.
 
 Limits:
 

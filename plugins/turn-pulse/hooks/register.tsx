@@ -77,7 +77,9 @@ function idleStatus($: EngineInterface, spent: Record<string, number>) {
   $.ui.status(Object.keys(spent).length > 0 ? `session: ${formatSpent(spent)}` : undefined)
 }
 
-// The band's content as one line, for /pulse.
+const isCloud = async ($: EngineInterface) => (await $.env.get('CLAUDE_CODE_REMOTE')) === 'true'
+
+// The band's content as one line, for /pulse in cloud sessions.
 function summarize(pulse: Pulse) {
   const outside = pulse.files.filter(file => file.isOutside)
   const inside = pulse.files.filter(file => !file.isOutside)
@@ -169,13 +171,14 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // Prints the last turn as text, which reaches every surface; `hide` and
-  // `show` set the band.
+  // Cloud sessions draw no band, so there /pulse prints the last turn as
+  // text instead of toggling the band.
   on('command.run', { command: 'pulse' }, async ($, e, next) => {
-    const arg = (e.args ?? '').trim().toLowerCase()
-    if (arg === 'hide' || arg === 'show') {
-      await update($, isHidden, () => arg === 'hide')
-      return { text: arg === 'hide' ? 'Turn pulse band hidden.' : 'Turn pulse band shown.' }
+    if (!(await isCloud($))) {
+      const hidden = await read($, isHidden)
+      await update($, isHidden, () => !hidden)
+
+      return { text: hidden ? 'Turn pulse band shown.' : 'Turn pulse band hidden.' }
     }
 
     const pulse = await read($, last)
@@ -188,8 +191,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'pulse',
-      description: 'Print the last turn summary, or hide or show the band',
-      argumentHint: '[hide|show]',
+      description: (await isCloud($)) ? 'Print the last turn summary' : 'Show or hide the turn pulse band',
     })
     idleStatus($, await measure($))
 
