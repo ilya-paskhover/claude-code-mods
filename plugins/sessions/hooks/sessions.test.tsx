@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { ago, look, parseSession, sortRows, STALE_MS } from './parse'
+import { ago, cloudSessionId, look, parseCloudSessions, parseSession, sortRows, STALE_MS } from './parse'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const PANE = { component: 'Pane', requestId: 'sessions', props: {} as never } as const
@@ -177,6 +177,96 @@ test('a cloud session never opens the pane unasked', async ($, on) => {
   await $.session.start({ source: 'startup', cwd: '/w', surface: 'terminal' } as never)
   await $.session.attach(attach('desktop'))
   expect(opens).toHaveLength(0)
+})
+
+const CLOUD_ENV = { CLAUDE_CODE_REMOTE: 'true', CLAUDE_CODE_REMOTE_SESSION_ID: 'cse_A' }
+
+const cloudSession = (id: string, fields: Record<string, unknown>) => ({
+  id: `session_${id}`,
+  title: `Task ${id}`,
+  status_bucket: 'SESSION_STATUS_BUCKET_COMPLETED',
+  updated_at: new Date(NOW).toISOString(),
+  ...fields,
+})
+
+// list_sessions answers with its JSON inside an untrusted-data envelope.
+const listing = (sessions: unknown[]) =>
+  `<other-session nonce="n" untrusted="true">\nA session's record (JSON):\n${JSON.stringify({ ccr: { data: sessions } })}\n</other-session nonce="n">`
+
+const cloudSetup = (on: On, sessions: unknown[]) => {
+  const base = setup(on, {}, CLOUD_ENV)
+  const calls: unknown[] = []
+  on('mcp.call', ($, e) => {
+    calls.push(e)
+    return { value: { content: [{ type: 'text', text: listing(sessions) }], isError: false } } as never
+  })
+  return { ...base, calls }
+}
+
+test('parse reads a cloud session list, envelope and all', () => {
+  const blocked = { status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED', external_metadata: { post_turn_summary: { needs_action: 'Approve the push' } } }
+  expect(parseCloudSessions(listing([
+    cloudSession('A', { status_bucket: 'SESSION_STATUS_BUCKET_WORKING' }),
+    cloudSession('B', blocked),
+    cloudSession('C', { post_turn_summary: { status_category: 'completed' }, external_metadata: { post_turn_summary: { needs_action: '' } } }),
+    { title: 'no id' },
+  ]))).toEqual([
+    { id: 'session_A', cwd: '', name: 'Task A', status: 'busy', updatedAt: NOW, url: 'https://claude.ai/code/session_A', needs: undefined },
+    { id: 'session_B', cwd: '', name: 'Task B', status: 'blocked', updatedAt: NOW, url: 'https://claude.ai/code/session_B', needs: 'Approve the push' },
+    { id: 'session_C', cwd: '', name: 'Task C', status: 'idle', updatedAt: NOW, url: 'https://claude.ai/code/session_C', needs: undefined },
+  ])
+  expect(parseCloudSessions('no json here')).toBeUndefined()
+  expect(parseCloudSessions('{"ccr":{}}')).toBeUndefined()
+  expect(cloudSessionId('cse_A')).toBe('session_A')
+})
+
+test('a cloud session lists recent cloud sessions with an Open link and what each needs', async ($, on) => {
+  const { calls, lists } = cloudSetup(on, [
+    cloudSession('A', { status_bucket: 'SESSION_STATUS_BUCKET_WORKING' }),
+    cloudSession('B', { status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED', external_metadata: { post_turn_summary: { needs_action: 'Approve the push' } } }),
+    cloudSession('C', { updated_at: new Date(NOW - 3 * 3_600_000).toISOString() }),
+  ])
+  await $.session.start({ source: 'startup', cwd: '/w' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(calls).toEqual([{ server: 'claude-code-remote', tool: 'list_sessions', args: { mine: true, limit: 10 } }])
+  expect(lists()).toBe(0)
+
+  for (const surface of [...SURFACES, 'mobile'] as const) {
+    const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
+    expect(await ui.findAll({ type: 'Text', text: /^3 recent$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^\s*needs input$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^\s*Approve the push$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^· 3h$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^· this session$/ })).toHaveLength(1)
+    const links = (await ui.findAll({ type: 'Link' })).map(link => link.props.href)
+    expect(links).toEqual(['https://claude.ai/code/session_B', 'https://claude.ai/code/session_C'])
+    const keys = (await ui.findAll({ type: 'Button' })).map(b => b.key)
+    expect(keys).toEqual(['refresh'])
+    await ui.unmount()
+  }
+})
+
+test('a cloud pane refreshes every 30 seconds, not every 5', async ($, on) => {
+  const { clock, calls } = cloudSetup(on, [cloudSession('A', {})])
+  await $.session.start({ source: 'startup', cwd: '/w' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(calls).toHaveLength(1)
+  await clock.advance(25_000)
+  expect(calls).toHaveLength(1)
+  await clock.advance(5_000)
+  expect(calls).toHaveLength(2)
+})
+
+test('a cloud session without the remote server says so', async ($, on) => {
+  setup(on, {}, CLOUD_ENV)
+  on('mcp.call', () => {
+    throw new Error('no such server')
+  })
+  await $.session.start({ source: 'startup', cwd: '/w' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  expect(await ui.findAll({ type: 'Text', text: /Couldn't reach the claude-code-remote MCP server/ })).toHaveLength(1)
+  await ui.unmount()
 })
 
 test('says so when no file can be read or the folder is missing', async ($, on) => {
