@@ -3,7 +3,8 @@ import type { On, SessionRateLimit } from 'claude-code'
 
 const SURFACES = ['terminal', 'desktop'] as const
 
-const setup = (on: On) => {
+const setup = (on: On, env: Record<string, string> = {}) => {
+  mock.env(on, env)
   const clock = mock.clock(on, { now: 1_000 })
   const toasts: string[] = []
   const statuses: (string | undefined)[] = []
@@ -108,6 +109,83 @@ test('limits: the turn cost goes in the band, the session total in the status li
     expect(await ui.findAll({ type: 'Text', text: /^5h \+2% · week \+0\.5%$/ })).toHaveLength(1)
     await ui.unmount()
   }
+})
+
+test('/pulse in a cloud session prints the last turn and the session total', async ($, on) => {
+  const { clock, usage } = setup(on, { CLAUDE_CODE_REMOTE: 'true' })
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe('No turn has finished yet.')
+
+  usage.limits = [{ kind: 'five_hour', percentUsed: 10, resetsAt: 'A' }]
+  await $.prompt.submit({ text: 'hi' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: 'd:/proj/src/app.ts', old_string: 'a', new_string: 'b' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'false' } as never)
+  await clock.advance(42_000)
+  usage.limits = [{ kind: 'five_hour', percentUsed: 11, resetsAt: 'A' }]
+  await $.turn.complete({ reason: 'answer' } as never)
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe(
+    '◆ last turn · ⏱ 42s · ✎ app.ts · ✓ 1 ok · ✗ 1 failed (Bash) · 5h +1%\nsession: 5h +1%',
+  )
+})
+
+test('/pulse in a cloud session: outside paths, a capped file list, no edits and repeated failures', async ($, on) => {
+  const { clock } = setup(on, { CLAUDE_CODE_REMOTE: 'true' })
+
+  await $.prompt.submit({ text: 'one' } as never)
+  await $.tool.call({ tool: 'Write', file_path: 'C:\\Users\\me\\.claude\\settings.json', content: '{}' } as never)
+  for (const name of ['a', 'b', 'c', 'd', 'e']) {
+    await $.tool.call({ tool: 'Edit', file_path: `d:/proj/src/${name}.ts`, old_string: 'a', new_string: 'b' } as never)
+  }
+  await clock.advance(7_000)
+  await $.turn.complete({ reason: 'answer' } as never)
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe(
+    '◆ last turn · ⏱ 7s · ⚠ outside: C:\\Users\\me\\.claude\\settings.json · ✎ a.ts, b.ts, c.ts +2 · ✓ 6 ok',
+  )
+
+  await $.prompt.submit({ text: 'two' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'false' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'false' } as never)
+  await clock.advance(3_000)
+  await $.turn.complete({ reason: 'answer' } as never)
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe(
+    '◆ last turn · ⏱ 3s · no edits · ✓ 0 ok · ✗ 2 failed (Bash ×2)',
+  )
+})
+
+test('/pulse in a cloud session measures the session total afresh', async ($, on) => {
+  const { usage } = setup(on, { CLAUDE_CODE_REMOTE: 'true' })
+  usage.limits = [{ kind: 'five_hour', percentUsed: 10, resetsAt: 'A' }]
+
+  await $.prompt.submit({ text: 'hi' } as never)
+  await $.turn.complete({ reason: 'answer' } as never)
+  // The window moves less than a point after the turn: no measure event fires.
+  usage.limits = [{ kind: 'five_hour', percentUsed: 10.9, resetsAt: 'A' }]
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toContain('session: 5h +0.9%')
+})
+
+test('/pulse elsewhere hides and shows the band', async ($, on) => {
+  const { clock } = setup(on)
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine band</Text>
+  })
+
+  await $.prompt.submit({ text: 'hi' } as never)
+  await clock.advance(3_000)
+  await $.turn.complete({ reason: 'answer' } as never)
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe('Turn pulse band hidden.')
+  const hidden = await $.ui.mount({ plugin: 'turn-pulse', surface: 'terminal', component: 'AbovePrompt', props: {} as never })
+  expect(await hidden.findAll({ type: 'Text', text: /last turn/ })).toHaveLength(0)
+  expect(await hidden.findAll({ type: 'Text', text: 'engine band' })).toHaveLength(1)
+  await hidden.unmount()
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe('Turn pulse band shown.')
+  const shown = await $.ui.mount({ plugin: 'turn-pulse', surface: 'terminal', component: 'AbovePrompt', props: {} as never })
+  expect(await shown.findAll({ type: 'Text', text: /last turn/ })).toHaveLength(1)
+  await shown.unmount()
 })
 
 test('a notebook edit outside the folder is flagged', async ($, on) => {
