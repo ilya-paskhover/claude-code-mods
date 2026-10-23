@@ -79,18 +79,33 @@ function idleStatus($: EngineInterface, spent: Record<string, number>) {
 
 const isCloud = async ($: EngineInterface) => (await $.env.get('CLAUDE_CODE_REMOTE')) === 'true'
 
-// The band's content as one line, for /pulse in cloud sessions.
-function summarize(pulse: Pulse) {
+// A pulse saved by an older version of this mod has another shape: skip it.
+const isCurrent = (pulse: Pulse | null): pulse is Pulse => pulse !== null && typeof pulse.ok === 'number'
+
+// The parts of a pulse the band and /pulse both show.
+function describe(pulse: Pulse) {
   const outside = pulse.files.filter(file => file.isOutside)
   const inside = pulse.files.filter(file => !file.isOutside)
-  const fails = countFails(pulse.failed)
-  const failures = Object.entries(pulse.failed)
-    .map(([tool, n]) => (n > 1 ? `${tool} ×${n}` : tool))
-    .join(', ')
-  const spent = pulse.spent ?? {}
-  const parts = [`◆ last turn`, `⏱ ${formatTime(pulse.seconds)}`]
+  return {
+    outside,
+    inside,
+    shown: inside.slice(0, 3).map(file => file.name).join(', '),
+    more: inside.length > 3 ? ` +${inside.length - 3}` : '',
+    fails: countFails(pulse.failed),
+    failures: Object.entries(pulse.failed)
+      .map(([tool, n]) => (n > 1 ? `${tool} ×${n}` : tool))
+      .join(', '),
+    spent: pulse.spent ?? {},
+  }
+}
+
+// The band as one line of text, for /pulse in cloud sessions. Edits outside
+// the folder show full paths, as in the toast, since text has the room.
+function summarize(pulse: Pulse) {
+  const { outside, inside, shown, more, fails, failures, spent } = describe(pulse)
+  const parts = ['◆ last turn', `⏱ ${formatTime(pulse.seconds)}`]
   if (outside.length > 0) parts.push(`⚠ outside: ${outside.map(file => file.path).join(', ')}`)
-  if (inside.length > 0) parts.push(`✎ ${inside.map(file => file.name).join(', ')}`)
+  if (inside.length > 0) parts.push(`✎ ${shown}${more}`)
   if (pulse.files.length === 0) parts.push('no edits')
   parts.push(`✓ ${pulse.ok} ok`)
   if (fails > 0) parts.push(`✗ ${fails} failed (${failures})`)
@@ -185,8 +200,9 @@ export const register: Register = on => {
     }
 
     const pulse = await read($, last)
-    const spent = sessionSpent(await read($, windows))
-    const lines = [pulse !== null && typeof pulse.ok === 'number' ? summarize(pulse) : 'No turn has finished yet.']
+    // Measured now: the saved windows can trail by up to a point.
+    const spent = await measure($)
+    const lines = [isCurrent(pulse) ? summarize(pulse) : 'No turn has finished yet.']
     if (Object.keys(spent).length > 0) lines.push(`session: ${formatSpent(spent)}`)
     return { text: lines.join('\n') }
   })
@@ -203,22 +219,12 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const pulse = await read($, last)
-    // A pulse saved by an older version of this mod has another shape: skip it.
-    const isCurrent = pulse !== null && typeof pulse.ok === 'number'
-    if (e.props.hasSurvey || !isCurrent || (await read($, isHidden))) {
+    if (e.props.hasSurvey || !isCurrent(pulse) || (await read($, isHidden))) {
       return next(e)
     }
 
     const { Box, Button, Text } = $.ui.resolve(e)
-    const outside = pulse.files.filter(file => file.isOutside)
-    const inside = pulse.files.filter(file => !file.isOutside)
-    const shown = inside.slice(0, 3).map(file => file.name).join(', ')
-    const more = inside.length > 3 ? ` +${inside.length - 3}` : ''
-    const failures = Object.entries(pulse.failed)
-      .map(([tool, n]) => (n > 1 ? `${tool} ×${n}` : tool))
-      .join(', ')
-    const fails = countFails(pulse.failed)
-    const spent = pulse.spent ?? {}
+    const { outside, inside, shown, more, fails, failures, spent } = describe(pulse)
 
     return (
       <Box flexDirection="row" gap={1}>

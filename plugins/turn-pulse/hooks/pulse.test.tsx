@@ -129,6 +129,42 @@ test('/pulse in a cloud session prints the last turn and the session total', asy
   )
 })
 
+test('/pulse in a cloud session: outside paths, a capped file list, no edits and repeated failures', async ($, on) => {
+  const { clock } = setup(on, { CLAUDE_CODE_REMOTE: 'true' })
+
+  await $.prompt.submit({ text: 'one' } as never)
+  await $.tool.call({ tool: 'Write', file_path: 'C:\\Users\\me\\.claude\\settings.json', content: '{}' } as never)
+  for (const name of ['a', 'b', 'c', 'd', 'e']) {
+    await $.tool.call({ tool: 'Edit', file_path: `d:/proj/src/${name}.ts`, old_string: 'a', new_string: 'b' } as never)
+  }
+  await clock.advance(7_000)
+  await $.turn.complete({ reason: 'answer' } as never)
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe(
+    '◆ last turn · ⏱ 7s · ⚠ outside: C:\\Users\\me\\.claude\\settings.json · ✎ a.ts, b.ts, c.ts +2 · ✓ 6 ok',
+  )
+
+  await $.prompt.submit({ text: 'two' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'false' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'false' } as never)
+  await clock.advance(3_000)
+  await $.turn.complete({ reason: 'answer' } as never)
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toBe(
+    '◆ last turn · ⏱ 3s · no edits · ✓ 0 ok · ✗ 2 failed (Bash ×2)',
+  )
+})
+
+test('/pulse in a cloud session measures the session total afresh', async ($, on) => {
+  const { usage } = setup(on, { CLAUDE_CODE_REMOTE: 'true' })
+  usage.limits = [{ kind: 'five_hour', percentUsed: 10, resetsAt: 'A' }]
+
+  await $.prompt.submit({ text: 'hi' } as never)
+  await $.turn.complete({ reason: 'answer' } as never)
+  // The window moves less than a point after the turn: no measure event fires.
+  usage.limits = [{ kind: 'five_hour', percentUsed: 10.9, resetsAt: 'A' }]
+
+  expect((await $.command.run({ command: 'pulse' } as never)).text).toContain('session: 5h +0.9%')
+})
+
 test('/pulse elsewhere hides and shows the band', async ($, on) => {
   const { clock } = setup(on)
   on('ui.render', ($, e) => {
