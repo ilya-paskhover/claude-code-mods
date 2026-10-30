@@ -1,0 +1,28 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/*/.claude-plugin/plugin.json'
+      - '.github/scripts/release.sh'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # A manual run can pick any branch: a tag made there would stick to unmerged
+    # code, and the script would skip that version once it really merges.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - run: bash .github/scripts/release.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
