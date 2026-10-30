@@ -24,7 +24,8 @@ const PANE = { component: 'Pane', requestId: 'sessions', props: {} as never } as
 const DIR = 'C:/Users/dev/.claude/sessions'
 const slashed = (e: unknown) => {
   const path = (e as { path: string }).path.replace(/\\/g, '/')
-  const at = path.indexOf('C:/')
+  // On Windows the macOS test's rooted path gets the current drive, so drop that too.
+  const at = path.search(/C:\/|\/Users\/dev\/Library\//)
   return at < 0 ? path : path.slice(at)
 }
 const NOW = Date.UTC(2026, 9, 9, 12, 0)
