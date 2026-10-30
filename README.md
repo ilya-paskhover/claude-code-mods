@@ -77,7 +77,8 @@ Limits:
 - One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, and "this session" on your own row.
 - A **Switch** button on each session the desktop app started opens that session in the app. Sessions started in a terminal have no button.
 - Working sessions sort first, then the most recently active.
-- A session spawned by another one, such as a `claude -p` run started from a Bash call, shows indented under its parent.
+- A session spawned by another one, such as a `claude -p` run started from a Bash call or a session started from another in the desktop app, shows indented under its parent.
+- Each row names the model the session runs on.
 - The pane refreshes every 5 seconds while it is open and stops when you close it.
 - The pane opens by itself once per local session: at start in a terminal, or when the desktop app connects. It opens unfocused, so the prompt keeps the keyboard. Close it and it stays closed for that session, through reloads and desktop reconnects.
 
@@ -93,7 +94,7 @@ Limits:
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
 - Locally, only sessions running on this machine appear: closed sessions and cloud sessions do not. In a cloud session, only cloud sessions appear, not the ones on your computer.
 - The cloud list is the `claude-code-remote` server's `list_sessions` output, which is not a documented format either; if it can't be read, the pane says so. In a live cloud session the plugin loads and `/sessions` runs, but the pane does not appear; tracked in [#14](https://github.com/ilya-paskhover/claude-code-mods/issues/14).
-- Nesting comes from the process table, since session files don't name a parent. Sessions the desktop app starts for another session run under the app, so they stay top-level. A child whose parent has exited goes back to top-level. If the process table can't be read, the list stays flat. On Windows a child can rarely nest under the wrong session, if its parent exited and a new session got the same pid.
+- Nesting comes from the process table, since session files don't name a parent, and from the desktop app's own session files for sessions it started. Those files, like the transcripts the model name comes from for other sessions, are not mod API and could change in any release; the pane then shows no model or a flatter list. A terminal session's model is read once, so a later `/model` doesn't show. A child whose parent has exited goes back to top-level. If the process table can't be read, the list stays flat. On Windows a child can rarely nest under the wrong session, if its parent exited and a new session got the same pid.
 - Switch works only for sessions the desktop app started, through an undocumented `claude://` link, not a mod API (tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4)).
 - In the desktop app, a click on the pane first gives it focus, so a button may need two clicks: one to focus the pane, one to press. The pane opens focused, so the first click right after `/sessions` works; after you click elsewhere, click anywhere in the pane (or Refresh) first. Press Esc to give the keyboard back to the prompt.
 - Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).

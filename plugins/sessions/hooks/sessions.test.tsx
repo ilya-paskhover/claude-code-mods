@@ -7,11 +7,14 @@ import {
   look,
   nestRows,
   parseCloudSessions,
+  parseDesktopSession,
   parseProcessTable,
   parseSession,
+  projectFolder,
   sessionAncestor,
   sortRows,
   STALE_MS,
+  transcriptModel,
 } from './parse'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -29,18 +32,31 @@ const NOW = Date.UTC(2026, 9, 9, 12, 0)
 const file = (pid: number, fields: Record<string, unknown>) =>
   JSON.stringify({ pid, sessionId: `s-${pid}`, cwd: `C:\\work\\p${pid}`, status: 'idle', updatedAt: NOW, ...fields })
 
-const setup = (on: On, files: Record<string, string>, env: Record<string, string> = {}, table = '') => {
+// tree: other files by full path; its folders list as dirs.
+const setup = (
+  on: On,
+  files: Record<string, string>,
+  env: Record<string, string> = {},
+  table = '',
+  tree: Record<string, string> = {},
+) => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { USERPROFILE: 'C:\\Users\\dev', ...env })
   const panes: { id: string }[] = []
   const opens: { id: string; focus?: boolean }[] = []
   let lists = 0
   on('fs.list', ($, e) => {
+    if (slashed(e) !== DIR) {
+      const under = Object.keys(tree).filter(path => path.startsWith(`${slashed(e)}/`))
+      if (under.length === 0) throw new Error('ENOENT')
+      const names = [...new Set(under.map(path => path.slice(slashed(e).length + 1).split('/')[0]!))]
+      return { value: names.map(name => ({ name, kind: 'dir', size: 1, mtimeMs: 0, isLink: false })) } as never
+    }
     lists++
-    if (slashed(e) !== DIR) throw new Error('ENOENT')
     return { value: Object.keys(files).map(name => ({ name, kind: 'file', size: 1, mtimeMs: 0, isLink: false })) } as never
   })
   on('fs.read', ($, e) => {
+    if (slashed(e) in tree) return { value: tree[slashed(e)] } as never
     const name = slashed(e).slice(DIR.length + 1)
     if (!(name in files)) throw new Error('ENOENT')
     return { value: files[name] } as never
@@ -155,6 +171,56 @@ test('a lone session reads no process table, and a failed read leaves the list f
   expect(await ui.findAll({ type: 'Text', text: /^(Alone|Other)$/ })).toHaveLength(2)
   expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(0)
   await ui.unmount()
+})
+
+test('parse reads what the desktop file and the transcript say about a session', () => {
+  expect(parseDesktopSession(JSON.stringify({ model: 'm', spawnedFrom: { sessionId: 'local_1' } }))).toEqual({ model: 'm', parentHost: 'local_1' })
+  expect(parseDesktopSession(JSON.stringify({ spawnedFrom: null }))).toEqual({ model: undefined, parentHost: undefined })
+  expect(parseDesktopSession('{broken')).toBeUndefined()
+  expect(projectFolder('C:\\work\\my.app')).toBe('C--work-my-app')
+
+  const reply = (model: string, fields: Record<string, unknown> = {}) =>
+    JSON.stringify({ message: { role: 'assistant', model }, ...fields })
+  expect(transcriptModel([reply('old'), reply('new'), reply('<synthetic>'), reply('sub', { isSidechain: true }), '{"assistant', ''].join('\n'))).toBe('new')
+  expect(transcriptModel(JSON.stringify({ type: 'user', toolUseResult: { role: 'assistant', model: 'quoted' } }))).toBeUndefined()
+  expect(transcriptModel('')).toBeUndefined()
+})
+
+test('the desktop file nests a started session under its parent and names models', async ($, on) => {
+  const FOLDER = 'C:/AppData/Claude/claude-code-sessions/org/user'
+  const reply = JSON.stringify({ message: { role: 'assistant', model: 'claude-haiku-5-5' } })
+  const { clock } = setup(
+    on,
+    {
+      '1.json': file(1, { name: 'Parent', hostSessionId: 'local_1', updatedAt: NOW - 60_000 }),
+      '2.json': file(2, { name: 'Started', hostSessionId: 'local_2' }),
+      '5.json': file(5, { name: 'Headless' }),
+      '6.json': file(6, { name: 'No transcript yet' }),
+    },
+    { APPDATA: 'C:\\AppData' },
+    '1 900\n2 900\n5 1\n6 900\n',
+    {
+      [`${FOLDER}/local_1.json`]: JSON.stringify({ model: 'claude-opus-5-5' }),
+      [`${FOLDER}/local_2.json`]: JSON.stringify({ model: 'claude-sonnet-5-5', spawnedFrom: { sessionId: 'local_1' } }),
+      'C:/Users/dev/.claude/projects/C--work-p5/s-5.jsonl': reply,
+    },
+  )
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+
+  const check = async () => {
+    const ui = await $.ui.mount({ plugin: 'sessions', surface: 'desktop', ...PANE })
+    const names = await ui.findAll({ type: 'Text', text: /^(Parent|Started|Headless|No transcript yet)$/ })
+    expect(names.map(n => (n as { text: string }).text)).toEqual(['No transcript yet', 'Parent', 'Started', 'Headless'])
+    expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(2)
+    for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+      expect(await ui.findAll({ type: 'Text', text: `· ${model}` })).toHaveLength(1)
+    }
+    await ui.unmount()
+  }
+  await check()
+  await clock.advance(5_000)
+  await check()
 })
 
 test('/sessions lists every running session with status and age, no folder', async ($, on) => {

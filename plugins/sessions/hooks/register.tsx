@@ -8,11 +8,14 @@ import {
   look,
   nestRows,
   parseCloudSessions,
+  parseDesktopSession,
   parseProcessTable,
   parseSession,
+  projectFolder,
   sessionAncestor,
   sortRows,
   switchLink,
+  transcriptModel,
 } from './parse'
 
 // Claude Code writes one <pid>.json per running session into its config
@@ -38,6 +41,8 @@ const cloud = atom({ plugin: 'sessions', key: 'cloud' } as const, false)
 // Session id to the pid of the session that spawned it, null for none. Keyed
 // by session, not pid, so a reused pid is looked up afresh.
 const parents = atom({ plugin: 'sessions', key: 'parents' } as const, {})
+// Session id to the model its transcript named, so a transcript is read once.
+const models = atom({ plugin: 'sessions', key: 'models' } as const, {})
 
 type Listing = { found: SessionRow[]; problem: string }
 
@@ -74,6 +79,50 @@ async function linkParents($: EngineInterface, found: SessionRow[]) {
   return found.map(row => ({ ...row, parent: linked[row.id] ?? undefined }))
 }
 
+// <app data>/Claude/claude-code-sessions/<org>/<user>/<host session id>.json
+async function desktopFolders($: EngineInterface) {
+  const appData = await $.env.get('APPDATA')
+  const home = await $.env.get('HOME')
+  const base = appData ?? (home === undefined ? undefined : `${home}/Library/Application Support`)
+  if (base === undefined) return []
+  const subfolders = async (path: string) =>
+    (await $.fs.list(path).catch(() => [])).filter(f => f.kind === 'dir').map(f => `${path}/${f.name}`)
+  const orgs = await subfolders(`${base.replace(/[\\/]+$/, '')}/Claude/claude-code-sessions`)
+  return (await Promise.all(orgs.map(subfolders))).flat()
+}
+
+// The desktop app's file names the model and the session that started this one
+// (which runs under the app, not the parent, so the process table can't tell).
+// Other sessions take the model from their transcript. shortcut: a transcript's
+// model is kept once found, so /model in a terminal session shows late, reread
+// if that matters.
+async function addDetails($: EngineInterface, found: SessionRow[], dir: string) {
+  const folders = found.some(row => row.hostSessionId !== undefined) ? await desktopFolders($) : []
+  const known = await read($, models)
+  const pidOfHost = new Map(found.map(row => [row.hostSessionId, row.pid]))
+  const learned: Record<string, string> = {}
+  const detailed: SessionRow[] = []
+  for (const row of found) {
+    let desktop: ReturnType<typeof parseDesktopSession>
+    for (const folder of row.hostSessionId === undefined ? [] : folders) {
+      desktop = await $.fs.read(`${folder}/${row.hostSessionId}.json`).then(parseDesktopSession).catch(() => undefined)
+      if (desktop !== undefined) break
+    }
+    const model =
+      desktop?.model ??
+      known[row.id] ??
+      (await $.fs
+        .read(`${dir.replace(/sessions$/, 'projects')}/${projectFolder(row.cwd)}/${row.id}.jsonl`)
+        .then(transcriptModel)
+        .catch(() => undefined))
+    if (model !== undefined && desktop?.model === undefined) learned[row.id] = model
+    const startedBy = desktop?.parentHost === undefined ? undefined : pidOfHost.get(desktop.parentHost)
+    detailed.push({ ...row, model, parent: startedBy ?? row.parent })
+  }
+  await update($, models, () => learned)
+  return detailed
+}
+
 async function localRows($: EngineInterface): Promise<Listing> {
   const dir = await sessionsDir($)
   const found: SessionRow[] = []
@@ -94,7 +143,8 @@ async function localRows($: EngineInterface): Promise<Listing> {
   } catch {
     problem = `No session folder found${dir === undefined ? '' : ` at ${dir}`}.`
   }
-  return { found: await linkParents($, found), problem }
+  const linked = await linkParents($, found)
+  return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem }
 }
 
 async function cloudRows($: EngineInterface): Promise<Listing> {
@@ -236,6 +286,7 @@ export const register: Register = on => {
               <Box flexDirection="row" gap={1}>
                 <Text color={color} dimColor={isDim}>  {label}</Text>
                 <Text dimColor>· {ago(at - row.updatedAt)}</Text>
+                {row.model !== undefined ? <Text dimColor>· {row.model}</Text> : null}
                 {row.id === current ? <Text dimColor>· this session</Text> : null}
               </Box>
               {row.needs !== undefined ? <Text dimColor>  {row.needs}</Text> : null}

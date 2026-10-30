@@ -106,6 +106,41 @@ export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
   })
 }
 
+// The desktop app's own file for a session it started, not part of the mod API:
+// read defensively, and only these two fields.
+export const parseDesktopSession = (text: string) => {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const o = raw as { model?: unknown; spawnedFrom?: { sessionId?: unknown } | null }
+  return { model: str(o.model), parentHost: str(o.spawnedFrom?.sessionId) }
+}
+
+// Claude Code's transcript folder for a working directory.
+export const projectFolder = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-')
+
+// The model of the latest main-thread reply. Whole lines are parsed since a
+// tool result can quote a "model" of its own.
+export const transcriptModel = (text: string) => {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? ''
+    if (!line.includes('"assistant"')) continue
+    try {
+      const o = JSON.parse(line) as { isSidechain?: unknown; message?: { role?: unknown; model?: unknown } }
+      const model = str(o.message?.model)
+      if (o.isSidechain !== true && o.message?.role === 'assistant' && model !== undefined && model !== '<synthetic>') return model
+    } catch {
+      // A line still being written.
+    }
+  }
+  return undefined
+}
+
 // One "pid ppid" per line, as the commands in register.tsx print the process table.
 export const parseProcessTable = (text: string) => {
   const table = new Map<number, number>()
