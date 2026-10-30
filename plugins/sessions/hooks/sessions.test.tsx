@@ -1,7 +1,18 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { ago, cloudSessionId, look, parseCloudSessions, parseSession, sortRows, STALE_MS } from './parse'
+import {
+  ago,
+  cloudSessionId,
+  look,
+  nestRows,
+  parseCloudSessions,
+  parseProcessTable,
+  parseSession,
+  sessionAncestor,
+  sortRows,
+  STALE_MS,
+} from './parse'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const PANE = { component: 'Pane', requestId: 'sessions', props: {} as never } as const
@@ -18,7 +29,7 @@ const NOW = Date.UTC(2026, 9, 9, 12, 0)
 const file = (pid: number, fields: Record<string, unknown>) =>
   JSON.stringify({ pid, sessionId: `s-${pid}`, cwd: `C:\\work\\p${pid}`, status: 'idle', updatedAt: NOW, ...fields })
 
-const setup = (on: On, files: Record<string, string>, env: Record<string, string> = {}) => {
+const setup = (on: On, files: Record<string, string>, env: Record<string, string> = {}, table = '') => {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, { USERPROFILE: 'C:\\Users\\dev', ...env })
   const panes: { id: string }[] = []
@@ -46,11 +57,17 @@ const setup = (on: On, files: Record<string, string>, env: Record<string, string
   on('session.start', ($, e) => ({ cwd: (e as { cwd: string }).cwd }) as never)
   on('session.attach', ($, e) => ({ clientId: (e as { clientId: string }).clientId }) as never)
   const runs: string[][] = []
+  let tableReads = 0
   on('process.run', ($, e) => {
-    runs.push([...(e as { argv: string[] }).argv])
+    const { argv } = e as { argv: string[] }
+    if (argv[0] === 'ps') {
+      tableReads++
+      return { value: { exitCode: 0, stdout: table, stderr: '' } } as never
+    }
+    runs.push([...argv])
     return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
   })
-  return { clock, panes, opens, runs, lists: () => lists }
+  return { clock, panes, opens, runs, lists: () => lists, tableReads: () => tableReads }
 }
 
 const attach = (surface: 'desktop' | 'mobile') => ({ surface, clientId: `${surface}:default` }) as never
@@ -78,6 +95,66 @@ test('ago and look', () => {
   expect(look(busy, NOW).label).toBe('working')
   expect(look(busy, NOW + STALE_MS + 1)).toMatchObject({ label: 'working?', isDim: true })
   expect(look({ ...busy, status: 'waiting' }, NOW).label).toBe('waiting')
+})
+
+test('the process table links a session to its nearest session ancestor', () => {
+  const table = parseProcessTable('  10  1\r\n50 10\n60 50\n70 80\n80 70\nnoise\n')
+  const sessions = new Set([10, 60])
+  expect(sessionAncestor(60, table, sessions)).toBe(10)
+  expect(sessionAncestor(10, table, sessions)).toBeUndefined()
+  expect(sessionAncestor(70, table, sessions)).toBeUndefined()
+  expect(sessionAncestor(99, table, sessions)).toBeUndefined()
+})
+
+test('nesting puts children under their parent and never loses a row', () => {
+  const row = (pid: number, parent?: number) => ({ ...parseSession(file(pid, {}))!, parent })
+  const shape = (rows: ReturnType<typeof row>[]) => nestRows(rows).map(n => [n.row.pid, n.depth])
+  expect(shape([row(3, 2), row(1), row(2, 1), row(4)])).toEqual([[1, 0], [2, 1], [3, 2], [4, 0]])
+  expect(shape([row(1, 99)])).toEqual([[1, 0]])
+  expect(shape([row(1, 2), row(2, 1)])).toEqual([[1, 0], [2, 1]])
+})
+
+test('the pane draws a spawned session under its parent and reads the table only for new sessions', async ($, on) => {
+  const files: Record<string, string> = {
+    '1.json': file(1, { name: 'Parent', updatedAt: NOW - 60_000 }),
+    '5.json': file(5, { name: 'Child', status: 'busy' }),
+    '3.json': file(3, { name: 'Other' }),
+  }
+  const { clock, tableReads } = setup(on, files, {}, '1 900\n50 1\n5 50\n3 900\n')
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(tableReads()).toBe(1)
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
+    const names = await ui.findAll({ type: 'Text', text: /^(Parent|Child|Other)$/ })
+    expect(names.map(n => (n as { text: string }).text)).toEqual(['Other', 'Parent', 'Child'])
+    expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^3 running$/ })).toHaveLength(1)
+    await ui.unmount()
+  }
+
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(1)
+  files['6.json'] = file(6, { name: 'New' })
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(2)
+})
+
+test('a lone session reads no process table, and a failed read leaves the list flat', async ($, on) => {
+  const files: Record<string, string> = { '1.json': file(1, { name: 'Alone' }) }
+  const { clock, tableReads } = setup(on, files)
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p1' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(tableReads()).toBe(0)
+
+  files['5.json'] = file(5, { name: 'Other' })
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(1)
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  expect(await ui.findAll({ type: 'Text', text: /^(Alone|Other)$/ })).toHaveLength(2)
+  expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(0)
+  await ui.unmount()
 })
 
 test('/sessions lists every running session with status and age, no folder', async ($, on) => {

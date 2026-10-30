@@ -14,6 +14,8 @@ export type SessionRow = {
   url?: string
   // What a blocked cloud session is waiting on, as that session put it.
   needs?: string
+  // The pid of the session that spawned this one, as the process table says.
+  parent?: number
 }
 
 declare module 'claude-code' {
@@ -25,6 +27,7 @@ declare module 'claude-code' {
       error: string
       autoOpened: boolean
       cloud: boolean
+      parents: Record<string, number | null>
     }
   }
 }

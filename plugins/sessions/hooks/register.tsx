@@ -2,7 +2,18 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { SessionRow } from '../types'
-import { ago, cloudSessionId, look, parseCloudSessions, parseSession, sortRows, switchLink } from './parse'
+import {
+  ago,
+  cloudSessionId,
+  look,
+  nestRows,
+  parseCloudSessions,
+  parseProcessTable,
+  parseSession,
+  sessionAncestor,
+  sortRows,
+  switchLink,
+} from './parse'
 
 // Claude Code writes one <pid>.json per running session into its config
 // folder's sessions/ directory. That file is the engine's own, not mod API.
@@ -24,6 +35,9 @@ const error = atom({ plugin: 'sessions', key: 'error' } as const, '')
 // must not reopen a pane the person closed.
 const autoOpened = atom({ plugin: 'sessions', key: 'autoOpened' } as const, false)
 const cloud = atom({ plugin: 'sessions', key: 'cloud' } as const, false)
+// Session id to the pid of the session that spawned it, null for none. Keyed
+// by session, not pid, so a reused pid is looked up afresh.
+const parents = atom({ plugin: 'sessions', key: 'parents' } as const, {})
 
 type Listing = { found: SessionRow[]; problem: string }
 
@@ -32,6 +46,32 @@ async function sessionsDir($: EngineInterface) {
   if (config !== undefined && config !== '') return `${config.replace(/[\\/]+$/, '')}/sessions`
   const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
   return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.claude/sessions`
+}
+
+async function processTable($: EngineInterface) {
+  const argv =
+    (await $.env.get('OS')) === 'Windows_NT'
+      ? ['powershell', '-NoProfile', '-Command', "Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId, $_.ParentProcessId -join ' ' }"]
+      : ['ps', '-A', '-o', 'pid=,ppid=']
+  const ran = await $.process.run(argv).catch(() => undefined)
+  return parseProcessTable(ran?.stdout ?? '')
+}
+
+// Session files don't name a parent, so the process table links a child to the
+// session that spawned it. Ancestry never changes, so the table is read only
+// when a new session appears. shortcut: a failed read leaves those sessions
+// flat for good, retry if that shows up in practice.
+async function linkParents($: EngineInterface, found: SessionRow[]) {
+  if (found.length < 2) return found
+  const known = await read($, parents)
+  const table = found.some(row => !(row.id in known)) ? await processTable($) : new Map<number, number>()
+  const sessionPids = new Set(found.flatMap(row => row.pid ?? []))
+  const linked: Record<string, number | null> = {}
+  for (const row of found) {
+    linked[row.id] = known[row.id] ?? (row.id in known ? null : (sessionAncestor(row.pid ?? -1, table, sessionPids) ?? null))
+  }
+  await update($, parents, () => linked)
+  return found.map(row => ({ ...row, parent: linked[row.id] ?? undefined }))
 }
 
 async function localRows($: EngineInterface): Promise<Listing> {
@@ -54,7 +94,7 @@ async function localRows($: EngineInterface): Promise<Listing> {
   } catch {
     problem = `No session folder found${dir === undefined ? '' : ` at ${dir}`}.`
   }
-  return { found, problem }
+  return { found: await linkParents($, found), problem }
 }
 
 async function cloudRows($: EngineInterface): Promise<Listing> {
@@ -179,12 +219,13 @@ export const register: Register = on => {
         </Box>
         {problem !== '' ? <Text color="error">{problem}</Text> : null}
         {problem === '' && list.length === 0 ? <Text dimColor>No {kind} sessions found.</Text> : null}
-        {list.map(row => {
+        {nestRows(list).map(({ row, depth }) => {
           const { dot, label, color, isDim } = look(row, at)
           const link = row.id === current ? undefined : switchLink(row)
           return (
-            <Box key={row.id} flexDirection="column">
+            <Box key={row.id} flexDirection="column" paddingLeft={depth * 2}>
               <Box flexDirection="row" gap={1}>
+                {depth > 0 ? <Text dimColor>└</Text> : null}
                 <Text color={color} dimColor={isDim}>{dot}</Text>
                 <Text bold={row.id === current} dimColor={isDim}>{row.name}</Text>
                 {link !== undefined ? (

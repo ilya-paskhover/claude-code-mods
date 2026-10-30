@@ -106,6 +106,50 @@ export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
   })
 }
 
+// One "pid ppid" per line, as the commands in register.tsx print the process table.
+export const parseProcessTable = (text: string) => {
+  const table = new Map<number, number>()
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line)
+    if (match !== null) table.set(Number(match[1]), Number(match[2]))
+  }
+  return table
+}
+
+// The nearest ancestor that is a session: a child usually runs under shells.
+export const sessionAncestor = (pid: number, table: ReadonlyMap<number, number>, sessionPids: ReadonlySet<number>) => {
+  const seen = new Set([pid])
+  for (let at = table.get(pid); at !== undefined && !seen.has(at); at = table.get(at)) {
+    if (sessionPids.has(at)) return at
+    seen.add(at)
+  }
+  return undefined
+}
+
+// Keeps the given order among siblings. A session whose parent is gone is a
+// top-level row.
+export const nestRows = (rows: readonly SessionRow[]) => {
+  const pids = new Set(rows.map(row => row.pid))
+  const children = new Map<number, SessionRow[]>()
+  for (const row of rows) {
+    if (row.parent !== undefined && pids.has(row.parent)) {
+      children.set(row.parent, [...(children.get(row.parent) ?? []), row])
+    }
+  }
+  const nested: { row: SessionRow; depth: number }[] = []
+  const placed = new Set<string>()
+  const place = (row: SessionRow, depth: number) => {
+    if (placed.has(row.id)) return
+    placed.add(row.id)
+    nested.push({ row, depth })
+    for (const child of children.get(row.pid ?? -1) ?? []) place(child, depth + 1)
+  }
+  for (const row of rows) if (row.parent === undefined || !pids.has(row.parent)) place(row, 0)
+  // A reused pid can close a loop with no top: those rows must still show.
+  for (const row of rows) place(row, 0)
+  return nested
+}
+
 export const ago = (ms: number) => {
   const minutes = Math.floor(Math.max(0, ms) / 60_000)
   if (minutes < 1) return 'now'
