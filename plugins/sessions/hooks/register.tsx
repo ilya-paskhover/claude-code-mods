@@ -177,7 +177,9 @@ async function addDetails($: EngineInterface, found: SessionRow[], dir: string) 
   return detailed
 }
 
-async function localRows($: EngineInterface): Promise<Listing> {
+// full false: parents and models only as earlier refreshes stored them, so no
+// process or transcript is read.
+async function localRows($: EngineInterface, full: boolean): Promise<Listing> {
   const dir = await sessionsDir($)
   const found: SessionRow[] = []
   let problem = ''
@@ -199,6 +201,10 @@ async function localRows($: EngineInterface): Promise<Listing> {
   } catch {
     problem = `No session folder found${dir === undefined ? '' : ` at ${dir}`}.`
   }
+  if (!full) {
+    const [linked, named] = [await read($, parents), await read($, models)]
+    return { found: found.map(row => ({ ...row, parent: linked[row.id] ?? undefined, model: named[row.id] })), problem }
+  }
   const linked = await linkParents($, found, unreadable)
   return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem }
 }
@@ -216,9 +222,9 @@ async function cloudRows($: EngineInterface): Promise<Listing> {
   return { found, problem: '' }
 }
 
-async function refresh($: EngineInterface) {
+async function refresh($: EngineInterface, full = true) {
   const at = await $.clock.now()
-  const { found, problem } = (await read($, cloud)) ? await cloudRows($) : await localRows($)
+  const { found, problem } = (await read($, cloud)) ? await cloudRows($) : await localRows($, full)
   await update($, rows, () => sortRows(found))
   await update($, error, () => problem)
   await update($, now, () => at)
@@ -230,6 +236,15 @@ async function openLink($: EngineInterface, url: string) {
     (await $.env.get('OS')) === 'Windows_NT' ? ['cmd', '/c', 'start', '', url] : ['open', url]
   const ran = await $.process.run(argv).catch(() => undefined)
   if (ran === undefined || ran.exitCode !== 0) $.ui.toast("Couldn't open that session in the desktop app.")
+}
+
+// The pane opens from a quick refresh; parents and models that need a process
+// or transcript read follow on a timer, so neither a session's start nor
+// /sessions waits on them.
+async function openQuickly($: EngineInterface) {
+  await refresh($, false)
+  // A cloud row has no parent or model to fill in.
+  if (!(await read($, cloud))) $.clock.after(0, () => refresh($))
 }
 
 // Module variable on purpose: a reload drops timers, and session.start
@@ -258,7 +273,7 @@ async function autoOpen($: EngineInterface) {
   if (await read($, cloud)) return
   if (await read($, autoOpened)) return
   await update($, autoOpened, () => true)
-  await refresh($)
+  await openQuickly($)
   // Unfocused, so the prompt keeps the keyboard. Unasked, the engine draws a
   // pane only from 144 columns, or 110 once /sessions has opened it; narrower,
   // it waits for /sessions.
@@ -279,7 +294,7 @@ export const register: Register = on => {
     const id = isCloud && remoteId !== undefined ? cloudSessionId(remoteId) : await $.session.id()
     await update($, sessionId, () => id)
     if (await isPaneUp($).catch(() => false)) {
-      await refresh($)
+      await openQuickly($)
       await startTicking($)
     }
     if (e.surface === 'terminal') await autoOpen($)
@@ -297,7 +312,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'sessions' }, async $ => {
-    await refresh($)
+    await openQuickly($)
     // Focused on open: unfocused, Switch took two clicks in the desktop app,
     // likely the first giving the pane focus.
     await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })

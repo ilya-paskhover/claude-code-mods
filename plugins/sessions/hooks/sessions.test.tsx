@@ -160,6 +160,7 @@ test('the pane draws a spawned session under its parent and reads the table only
   const { clock, tableReads } = setup(on, files, {}, '1 900\n50 1\n5 50\n3 900\n')
   await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
   expect(tableReads()).toBe(1)
 
   for (const surface of SURFACES) {
@@ -183,6 +184,7 @@ test('a lone session reads no process table, and an empty table leaves the list 
   const { clock, tableReads } = setup(on, files)
   await $.session.start({ source: 'startup', cwd: 'C:/work/p1' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
   expect(tableReads()).toBe(0)
 
   files['5.json'] = file(5, { name: 'Other' })
@@ -228,6 +230,7 @@ test('the desktop file nests a started session under its parent and names models
   )
   await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
 
   const check = async () => {
     const ui = await $.ui.mount({ plugin: 'sessions', surface: 'desktop', ...PANE })
@@ -251,12 +254,30 @@ const marks = async ($: { ui: { mount: (o: never) => Promise<{ findAll: (q: neve
   return found
 }
 
+test('a session starts and /sessions opens without waiting on the process table', async ($, on) => {
+  const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }) }
+  const { clock, opens, tableReads } = setup(on, files, {}, '1 900\n5 1\n')
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2', surface: 'terminal' } as never)
+  expect(opens).toHaveLength(1)
+  expect(tableReads()).toBe(0)
+  expect(await marks($)).toBe(0)
+
+  await clock.advance(0)
+  expect(tableReads()).toBe(1)
+  expect(await marks($)).toBe(1)
+
+  // What the follow-up learned is shown at once by the next /sessions.
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(await marks($)).toBe(1)
+})
+
 test('a failed table read leaves the list flat, then is tried again soon, backing off', async ($, on) => {
   const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }) }
   let table = 'THROW'
   const { clock, tableReads } = setup(on, files, {}, () => table)
   await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
   expect(tableReads()).toBe(1)
   expect(await marks($)).toBe(0)
 
@@ -311,6 +332,7 @@ test('a child whose parent exited stays top-level when a new session takes the p
   const { clock } = setup(on, files, {}, () => table)
   await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
   expect(await marks($)).toBe(1)
 
   delete files['1.json']
@@ -323,16 +345,17 @@ test('a child whose parent exited stays top-level when a new session takes the p
 
 test('on Windows the table comes from PowerShell', async ($, on) => {
   const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }) }
-  const { tableCommands } = setup(on, files, { OS: 'Windows_NT' }, '1 900\r\n5 1\r\n')
+  const { tableCommands, clock } = setup(on, files, { OS: 'Windows_NT' }, '1 900\r\n5 1\r\n')
   await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
   expect(tableCommands).toEqual(['powershell'])
   expect(await marks($)).toBe(1)
 })
 
 test('on macOS the desktop files come from Application Support, and a gone desktop parent falls back to the table', async ($, on) => {
   const FOLDER = '/Users/dev/Library/Application Support/Claude/claude-code-sessions/org/user'
-  setup(
+  const { clock } = setup(
     on,
     { '1.json': file(1, { name: 'Parent' }), '2.json': file(2, { name: 'Started', hostSessionId: 'local_2' }) },
     { HOME: '/Users/dev', USERPROFILE: 'C:\\Users\\dev' },
@@ -341,6 +364,7 @@ test('on macOS the desktop files come from Application Support, and a gone deskt
   )
   await $.session.start({ source: 'startup', cwd: 'C:/work/p3' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
   const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
   expect(await ui.findAll({ type: 'Text', text: '· claude-sonnet-5-5' })).toHaveLength(1)
   expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(1)
