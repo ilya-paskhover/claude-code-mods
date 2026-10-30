@@ -138,6 +138,10 @@ In the session, `claude plugin list` should then show `<mod>@mod-branch` enabled
 
 Each mod's `tsconfig.json` extends the type declarations the engine writes into `.claude-plugin/types/` when it loads the mod (gitignored), so `tsc -p plugins/notes` works once the mod has loaded once.
 
+### Reviewing a PR
+
+`.claude/settings.json` enables Anthropic's [`pr-review-toolkit`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/pr-review-toolkit) for every session in this repo, cloud sessions included, so Claude Code asks once to trust the `claude-plugins-official` marketplace. Run `/pr-review-toolkit:review-pr errors tests comments` for a review: on [#12](https://github.com/ilya-paskhover/claude-code-mods/pull/12) and [#16](https://github.com/ilya-paskhover/claude-code-mods/pull/16) those three agents found nearly everything the full set did, with much less noise. Add `types` when a PR changes types; `all` runs every agent.
+
 ## License
 
 [MIT](LICENSE)
