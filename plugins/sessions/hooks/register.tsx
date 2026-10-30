@@ -47,7 +47,10 @@ const models = atom({ plugin: 'sessions', key: 'models' } as const, {})
 // A lookup that couldn't finish (process table unread, a session file mid-write,
 // no model in the transcript yet) is tried again after this long, not every refresh.
 const RETRY_MS = 60_000
-const retryParent = new Map<string, number>()
+// A failed table read is often just a busy machine, so it starts over soon,
+// doubling up to RETRY_MS since each try costs a process.
+const FIRST_PARENT_RETRY_MS = 5_000
+const retryParent = new Map<string, { at: number; wait: number }>()
 const retryModel = new Map<string, number>()
 // What $.fs.read refuses: a long session's transcript passes it.
 const READ_LIMIT = 4 * 1024 * 1024
@@ -84,12 +87,12 @@ async function processTable($: EngineInterface) {
 // kept: rereading costs a process (PowerShell on Windows) and could lose the
 // link once an intermediate shell exits and the child is reparented. "No
 // parent" is kept only from a complete look: a failed table read, or a session
-// file unreadable this refresh, is tried again after RETRY_MS.
+// file unreadable this refresh, is tried again, backing off to RETRY_MS.
 async function linkParents($: EngineInterface, found: SessionRow[], unreadable: number) {
   if (found.length < 2) return found
   const known = await read($, parents)
   const at = await $.clock.now()
-  const due = found.some(row => !(row.id in known) && (retryParent.get(row.id) ?? 0) <= at)
+  const due = found.some(row => !(row.id in known) && (retryParent.get(row.id)?.at ?? 0) <= at)
   const table = due ? await processTable($) : undefined
   const idOfPid = new Map(found.flatMap(row => (row.pid === undefined ? [] : [[row.pid, row.id] as const])))
   const sessionPids = new Set(idOfPid.keys())
@@ -103,7 +106,10 @@ async function linkParents($: EngineInterface, found: SessionRow[], unreadable: 
     if (ancestor !== undefined) linked[row.id] = idOfPid.get(ancestor) ?? null
     else if (table !== undefined && unreadable === 0) linked[row.id] = null
     if (row.id in linked) retryParent.delete(row.id)
-    else if (due) retryParent.set(row.id, at + RETRY_MS)
+    else if (due) {
+      const wait = retryParent.get(row.id)?.wait ?? FIRST_PARENT_RETRY_MS
+      retryParent.set(row.id, { at: at + wait, wait: Math.min(wait * 2, RETRY_MS) })
+    }
   }
   for (const id of retryParent.keys()) if (!found.some(row => row.id === id)) retryParent.delete(id)
   await update($, parents, () => linked)

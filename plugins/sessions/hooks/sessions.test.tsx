@@ -251,7 +251,7 @@ const marks = async ($: { ui: { mount: (o: never) => Promise<{ findAll: (q: neve
   return found
 }
 
-test('a failed table read leaves the list flat, then is tried again a minute later', async ($, on) => {
+test('a failed table read leaves the list flat, then is tried again soon, backing off', async ($, on) => {
   const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }) }
   let table = 'THROW'
   const { clock, tableReads } = setup(on, files, {}, () => table)
@@ -260,12 +260,37 @@ test('a failed table read leaves the list flat, then is tried again a minute lat
   expect(tableReads()).toBe(1)
   expect(await marks($)).toBe(0)
 
-  table = '1 900\n5 1\n'
+  // After 5 s, then 10 s, then 20 s.
   await clock.advance(5_000)
-  expect(tableReads()).toBe(1)
-  await clock.advance(60_000)
   expect(tableReads()).toBe(2)
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(2)
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(3)
+  expect(await marks($)).toBe(0)
+
+  table = '1 900\n5 1\n'
+  await clock.advance(15_000)
+  expect(tableReads()).toBe(3)
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(4)
   expect(await marks($)).toBe(1)
+
+  await clock.advance(60_000)
+  expect(tableReads()).toBe(4)
+})
+
+test('a table that keeps failing is read at most once a minute', async ($, on) => {
+  const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }) }
+  const { clock, tableReads } = setup(on, files, {}, () => 'THROW')
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(5_000 + 10_000 + 20_000 + 40_000 + 60_000)
+  expect(tableReads()).toBe(6)
+  await clock.advance(55_000)
+  expect(tableReads()).toBe(6)
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(7)
 })
 
 test('a parent file caught mid-write does not unlink its child for good', async ($, on) => {
