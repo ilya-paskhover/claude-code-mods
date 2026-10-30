@@ -38,11 +38,19 @@ const error = atom({ plugin: 'sessions', key: 'error' } as const, '')
 // must not reopen a pane the person closed.
 const autoOpened = atom({ plugin: 'sessions', key: 'autoOpened' } as const, false)
 const cloud = atom({ plugin: 'sessions', key: 'cloud' } as const, false)
-// Session id to the pid of the session that spawned it, null for none. Keyed
-// by session, not pid, so a reused pid is looked up afresh.
+// Session id to the id of the session that spawned it, null for none. Ids,
+// not pids: a pid can be reused by a later session, a session id never is.
 const parents = atom({ plugin: 'sessions', key: 'parents' } as const, {})
-// Session id to the model its transcript named, so a transcript is read once.
+// Session id to the model its transcript named, so a transcript is no longer
+// read once it has named one.
 const models = atom({ plugin: 'sessions', key: 'models' } as const, {})
+// A lookup that couldn't finish (process table unread, a session file mid-write,
+// no model in the transcript yet) is tried again after this long, not every refresh.
+const RETRY_MS = 60_000
+const retryParent = new Map<string, number>()
+const retryModel = new Map<string, number>()
+// What $.fs.read refuses: a long session's transcript passes it.
+const READ_LIMIT = 4 * 1024 * 1024
 
 type Listing = { found: SessionRow[]; problem: string }
 
@@ -53,33 +61,58 @@ async function sessionsDir($: EngineInterface) {
   return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.claude/sessions`
 }
 
+const isWindows = async ($: EngineInterface) => (await $.env.get('OS')) === 'Windows_NT'
+
+// undefined when the table couldn't be read: the command failed, or printed nothing usable.
 async function processTable($: EngineInterface) {
-  const argv =
-    (await $.env.get('OS')) === 'Windows_NT'
-      ? ['powershell', '-NoProfile', '-Command', "Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId, $_.ParentProcessId -join ' ' }"]
-      : ['ps', '-A', '-o', 'pid=,ppid=']
-  const ran = await $.process.run(argv).catch(() => undefined)
-  return parseProcessTable(ran?.stdout ?? '')
+  const argv = (await isWindows($))
+    ? ['powershell', '-NoProfile', '-Command', "Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId, $_.ParentProcessId -join ' ' }"]
+    : ['ps', '-A', '-o', 'pid=,ppid=']
+  const ran = await $.process.run(argv, { timeoutMs: 10_000 }).catch((err: unknown) => {
+    $.ui.log(`sessions: process table: ${String(err)}`, { to: 'debug' })
+    return undefined
+  })
+  const table = ran?.exitCode === 0 ? parseProcessTable(ran.stdout) : new Map<number, number>()
+  if (ran !== undefined && table.size === 0) {
+    $.ui.log(`sessions: process table unread (exit ${ran.exitCode}): ${ran.stderr.slice(0, 300)}`, { to: 'debug' })
+  }
+  return table.size > 0 ? table : undefined
 }
 
 // Session files don't name a parent, so the process table links a child to the
-// session that spawned it. Ancestry never changes, so the table is read only
-// when a new session appears. shortcut: a failed read leaves those sessions
-// flat for good, retry if that shows up in practice.
-async function linkParents($: EngineInterface, found: SessionRow[]) {
+// session that spawned it. The link found when a session first appears is
+// kept: rereading costs a process (PowerShell on Windows) and could lose the
+// link once an intermediate shell exits and the child is reparented. "No
+// parent" is kept only from a complete look: a failed table read, or a session
+// file unreadable this refresh, is tried again after RETRY_MS.
+async function linkParents($: EngineInterface, found: SessionRow[], unreadable: number) {
   if (found.length < 2) return found
   const known = await read($, parents)
-  const table = found.some(row => !(row.id in known)) ? await processTable($) : new Map<number, number>()
-  const sessionPids = new Set(found.flatMap(row => row.pid ?? []))
-  const linked: Record<string, number | null> = {}
+  const at = await $.clock.now()
+  const due = found.some(row => !(row.id in known) && (retryParent.get(row.id) ?? 0) <= at)
+  const table = due ? await processTable($) : undefined
+  const idOfPid = new Map(found.flatMap(row => (row.pid === undefined ? [] : [[row.pid, row.id] as const])))
+  const sessionPids = new Set(idOfPid.keys())
+  const linked: Record<string, string | null> = {}
   for (const row of found) {
-    linked[row.id] = known[row.id] ?? (row.id in known ? null : (sessionAncestor(row.pid ?? -1, table, sessionPids) ?? null))
+    if (row.id in known) {
+      linked[row.id] = known[row.id] ?? null
+      continue
+    }
+    const ancestor = table === undefined ? undefined : sessionAncestor(row.pid ?? -1, table, sessionPids)
+    if (ancestor !== undefined) linked[row.id] = idOfPid.get(ancestor) ?? null
+    else if (table !== undefined && unreadable === 0) linked[row.id] = null
+    if (row.id in linked) retryParent.delete(row.id)
+    else if (due) retryParent.set(row.id, at + RETRY_MS)
   }
+  for (const id of retryParent.keys()) if (!found.some(row => row.id === id)) retryParent.delete(id)
   await update($, parents, () => linked)
   return found.map(row => ({ ...row, parent: linked[row.id] ?? undefined }))
 }
 
-// <app data>/Claude/claude-code-sessions/<org>/<user>/<host session id>.json
+// <app data>/Claude/claude-code-sessions/<org>/<user>/<host session id>.json,
+// <app data> being %APPDATA% on Windows and ~/Library/Application Support on
+// macOS; the desktop app has no Linux build.
 async function desktopFolders($: EngineInterface) {
   const appData = await $.env.get('APPDATA')
   const home = await $.env.get('HOME')
@@ -91,15 +124,30 @@ async function desktopFolders($: EngineInterface) {
   return (await Promise.all(orgs.map(subfolders))).flat()
 }
 
+// A transcript over READ_LIMIT is read from its end, where the latest reply is.
+async function readTranscript($: EngineInterface, folder: string, name: string) {
+  const path = `${folder}/${name}`
+  const text = await $.fs.read(path).catch(() => undefined)
+  if (text !== undefined) return text
+  const entry = (await $.fs.list(folder).catch(() => [])).find(f => f.name === name)
+  if (entry === undefined || entry.size <= READ_LIMIT) return undefined
+  const argv = (await isWindows($))
+    ? ['powershell', '-NoProfile', '-Command', `Get-Content -LiteralPath '${path.replace(/'/g, "''")}' -Tail 500`]
+    : ['tail', '-n', '500', path]
+  const ran = await $.process.run(argv, { timeoutMs: 10_000 }).catch(() => undefined)
+  return ran?.exitCode === 0 ? ran.stdout : undefined
+}
+
 // The desktop app's file names the model and the session that started this one
 // (which runs under the app, not the parent, so the process table can't tell).
 // Other sessions take the model from their transcript. shortcut: a transcript's
-// model is kept once found, so /model in a terminal session shows late, reread
-// if that matters.
+// model is kept once found, so a later /model never shows for those sessions;
+// reread if that matters.
 async function addDetails($: EngineInterface, found: SessionRow[], dir: string) {
   const folders = found.some(row => row.hostSessionId !== undefined) ? await desktopFolders($) : []
   const known = await read($, models)
-  const pidOfHost = new Map(found.map(row => [row.hostSessionId, row.pid]))
+  const at = await $.clock.now()
+  const idOfHost = new Map(found.flatMap(row => (row.hostSessionId === undefined ? [] : [[row.hostSessionId, row.id] as const])))
   const learned: Record<string, string> = {}
   const detailed: SessionRow[] = []
   for (const row of found) {
@@ -108,17 +156,17 @@ async function addDetails($: EngineInterface, found: SessionRow[], dir: string) 
       desktop = await $.fs.read(`${folder}/${row.hostSessionId}.json`).then(parseDesktopSession).catch(() => undefined)
       if (desktop !== undefined) break
     }
-    const model =
-      desktop?.model ??
-      known[row.id] ??
-      (await $.fs
-        .read(`${dir.replace(/sessions$/, 'projects')}/${projectFolder(row.cwd)}/${row.id}.jsonl`)
-        .then(transcriptModel)
-        .catch(() => undefined))
+    let model = desktop?.model ?? known[row.id]
+    if (model === undefined && (retryModel.get(row.id) ?? 0) <= at) {
+      const text = await readTranscript($, `${dir.replace(/sessions$/, 'projects')}/${projectFolder(row.cwd)}`, `${row.id}.jsonl`)
+      model = text === undefined ? undefined : transcriptModel(text)
+      if (model === undefined) retryModel.set(row.id, at + RETRY_MS)
+    }
     if (model !== undefined && desktop?.model === undefined) learned[row.id] = model
-    const startedBy = desktop?.parentHost === undefined ? undefined : pidOfHost.get(desktop.parentHost)
+    const startedBy = desktop?.parentHost === undefined ? undefined : idOfHost.get(desktop.parentHost)
     detailed.push({ ...row, model, parent: startedBy ?? row.parent })
   }
+  for (const id of retryModel.keys()) if (!found.some(row => row.id === id)) retryModel.delete(id)
   await update($, models, () => learned)
   return detailed
 }
@@ -127,6 +175,7 @@ async function localRows($: EngineInterface): Promise<Listing> {
   const dir = await sessionsDir($)
   const found: SessionRow[] = []
   let problem = ''
+  let unreadable = 0
   try {
     if (dir === undefined) throw new Error('no home folder')
     const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
@@ -136,6 +185,7 @@ async function localRows($: EngineInterface): Promise<Listing> {
         .then(parseSession)
         .catch(() => undefined)
       if (row !== undefined) found.push(row)
+      else unreadable++
     }
     if (files.length > 0 && found.length === 0) {
       problem = "Couldn't read any session file: Claude Code may have changed their format."
@@ -143,7 +193,7 @@ async function localRows($: EngineInterface): Promise<Listing> {
   } catch {
     problem = `No session folder found${dir === undefined ? '' : ` at ${dir}`}.`
   }
-  const linked = await linkParents($, found)
+  const linked = await linkParents($, found, unreadable)
   return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem }
 }
 

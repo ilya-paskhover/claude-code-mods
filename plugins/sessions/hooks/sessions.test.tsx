@@ -32,12 +32,15 @@ const NOW = Date.UTC(2026, 9, 9, 12, 0)
 const file = (pid: number, fields: Record<string, unknown>) =>
   JSON.stringify({ pid, sessionId: `s-${pid}`, cwd: `C:\\work\\p${pid}`, status: 'idle', updatedAt: NOW, ...fields })
 
-// tree: other files by full path; its folders list as dirs.
+// tree: other files by full path; listing a folder gives its files and subfolders.
+// A tree file starting with BIG is over $.fs.read's limit: only its tail can be read.
+// table: the process table's output, read when asked; THROW makes the read fail.
+const BIG = 'BIG\n'
 const setup = (
   on: On,
   files: Record<string, string>,
   env: Record<string, string> = {},
-  table = '',
+  table: string | (() => string) = '',
   tree: Record<string, string> = {},
 ) => {
   const clock = mock.clock(on, { now: NOW })
@@ -50,12 +53,21 @@ const setup = (
       const under = Object.keys(tree).filter(path => path.startsWith(`${slashed(e)}/`))
       if (under.length === 0) throw new Error('ENOENT')
       const names = [...new Set(under.map(path => path.slice(slashed(e).length + 1).split('/')[0]!))]
-      return { value: names.map(name => ({ name, kind: 'dir', size: 1, mtimeMs: 0, isLink: false })) } as never
+      return {
+        value: names.map(name => {
+          const text = tree[`${slashed(e)}/${name}`]
+          const size = text === undefined ? 1 : text.startsWith(BIG) ? 5 * 1024 * 1024 : text.length
+          return { name, kind: text === undefined ? 'dir' : 'file', size, mtimeMs: 0, isLink: false }
+        }),
+      } as never
     }
     lists++
     return { value: Object.keys(files).map(name => ({ name, kind: 'file', size: 1, mtimeMs: 0, isLink: false })) } as never
   })
+  const reads: string[] = []
   on('fs.read', ($, e) => {
+    reads.push(slashed(e))
+    if (tree[slashed(e)]?.startsWith(BIG)) throw new Error('over 4 MiB')
     if (slashed(e) in tree) return { value: tree[slashed(e)] } as never
     const name = slashed(e).slice(DIR.length + 1)
     if (!(name in files)) throw new Error('ENOENT')
@@ -74,16 +86,24 @@ const setup = (
   on('session.attach', ($, e) => ({ clientId: (e as { clientId: string }).clientId }) as never)
   const runs: string[][] = []
   let tableReads = 0
+  const tableCommands: string[] = []
   on('process.run', ($, e) => {
     const { argv } = e as { argv: string[] }
-    if (argv[0] === 'ps') {
+    if (argv[0] === 'ps' || argv.some(arg => arg.includes('Win32_Process'))) {
       tableReads++
-      return { value: { exitCode: 0, stdout: table, stderr: '' } } as never
+      tableCommands.push(argv[0]!)
+      const out = typeof table === 'function' ? table() : table
+      if (out === 'THROW') throw new Error('not found')
+      return { value: { exitCode: 0, stdout: out, stderr: '' } } as never
+    }
+    if (argv[0] === 'tail' || argv.some(arg => arg.startsWith('Get-Content'))) {
+      const path = argv[0] === 'tail' ? argv.at(-1)! : /'(.*)'/.exec(argv.at(-1)!)![1]!
+      return { value: { exitCode: 0, stdout: (tree[path.replace(/\\/g, '/')] ?? '').slice(BIG.length), stderr: '' } } as never
     }
     runs.push([...argv])
     return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
   })
-  return { clock, panes, opens, runs, lists: () => lists, tableReads: () => tableReads }
+  return { clock, panes, opens, runs, reads, tableCommands, lists: () => lists, tableReads: () => tableReads }
 }
 
 const attach = (surface: 'desktop' | 'mobile') => ({ surface, clientId: `${surface}:default` }) as never
@@ -123,7 +143,7 @@ test('the process table links a session to its nearest session ancestor', () => 
 })
 
 test('nesting puts children under their parent and never loses a row', () => {
-  const row = (pid: number, parent?: number) => ({ ...parseSession(file(pid, {}))!, parent })
+  const row = (pid: number, parent?: number) => ({ ...parseSession(file(pid, {}))!, parent: parent === undefined ? undefined : `s-${parent}` })
   const shape = (rows: ReturnType<typeof row>[]) => nestRows(rows).map(n => [n.row.pid, n.depth])
   expect(shape([row(3, 2), row(1), row(2, 1), row(4)])).toEqual([[1, 0], [2, 1], [3, 2], [4, 0]])
   expect(shape([row(1, 99)])).toEqual([[1, 0]])
@@ -157,7 +177,7 @@ test('the pane draws a spawned session under its parent and reads the table only
   expect(tableReads()).toBe(2)
 })
 
-test('a lone session reads no process table, and a failed read leaves the list flat', async ($, on) => {
+test('a lone session reads no process table, and an empty table leaves the list flat', async ($, on) => {
   const files: Record<string, string> = { '1.json': file(1, { name: 'Alone' }) }
   const { clock, tableReads } = setup(on, files)
   await $.session.start({ source: 'startup', cwd: 'C:/work/p1' } as never)
@@ -221,6 +241,102 @@ test('the desktop file nests a started session under its parent and names models
   await check()
   await clock.advance(5_000)
   await check()
+})
+
+const marks = async ($: { ui: { mount: (o: never) => Promise<{ findAll: (q: never) => Promise<unknown[]>; unmount: () => Promise<void> }> } }) => {
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE } as never)
+  const found = (await ui.findAll({ type: 'Text', text: /^└$/ } as never)).length
+  await ui.unmount()
+  return found
+}
+
+test('a failed table read leaves the list flat, then is tried again a minute later', async ($, on) => {
+  const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }) }
+  let table = 'THROW'
+  const { clock, tableReads } = setup(on, files, {}, () => table)
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(tableReads()).toBe(1)
+  expect(await marks($)).toBe(0)
+
+  table = '1 900\n5 1\n'
+  await clock.advance(5_000)
+  expect(tableReads()).toBe(1)
+  await clock.advance(60_000)
+  expect(tableReads()).toBe(2)
+  expect(await marks($)).toBe(1)
+})
+
+test('a parent file caught mid-write does not unlink its child for good', async ($, on) => {
+  const files: Record<string, string> = { '1.json': '{half written', '5.json': file(5, { name: 'Child' }), '3.json': file(3, { name: 'Other' }) }
+  const { clock } = setup(on, files, {}, '1 900\n5 1\n3 900\n')
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(await marks($)).toBe(0)
+  // Readable again, the parent shows up as a new session, which looks again.
+  files['1.json'] = file(1, { name: 'Parent' })
+  await clock.advance(5_000)
+  expect(await marks($)).toBe(1)
+})
+
+test('a child whose parent exited stays top-level when a new session takes the parent pid', async ($, on) => {
+  const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }), '3.json': file(3, { name: 'Other' }) }
+  let table = '1 900\n5 1\n3 900\n'
+  const { clock } = setup(on, files, {}, () => table)
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(await marks($)).toBe(1)
+
+  delete files['1.json']
+  await clock.advance(5_000)
+  files['1.json'] = JSON.stringify({ pid: 1, sessionId: 's-new', cwd: 'C:\\work\\q', status: 'idle', updatedAt: NOW, name: 'Q' })
+  table = '1 901\n5 900\n3 900\n'
+  await clock.advance(5_000)
+  expect(await marks($)).toBe(0)
+})
+
+test('on Windows the table comes from PowerShell', async ($, on) => {
+  const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }) }
+  const { tableCommands } = setup(on, files, { OS: 'Windows_NT' }, '1 900\r\n5 1\r\n')
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  expect(tableCommands).toEqual(['powershell'])
+  expect(await marks($)).toBe(1)
+})
+
+test('on macOS the desktop files come from Application Support, and a gone desktop parent falls back to the table', async ($, on) => {
+  const FOLDER = '/Users/dev/Library/Application Support/Claude/claude-code-sessions/org/user'
+  setup(
+    on,
+    { '1.json': file(1, { name: 'Parent' }), '2.json': file(2, { name: 'Started', hostSessionId: 'local_2' }) },
+    { HOME: '/Users/dev', USERPROFILE: 'C:\\Users\\dev' },
+    '1 900\n2 1\n',
+    { [`${FOLDER}/local_2.json`]: JSON.stringify({ model: 'claude-sonnet-5-5', spawnedFrom: { sessionId: 'local_gone' } }) },
+  )
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p3' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  expect(await ui.findAll({ type: 'Text', text: '· claude-sonnet-5-5' })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a transcript is read until it names a model, and a long one from its end', async ($, on) => {
+  const PROJECTS = 'C:/Users/dev/.claude/projects'
+  const reply = (model: string) => JSON.stringify({ message: { role: 'assistant', model } })
+  const { clock, reads } = setup(on, { '1.json': file(1, { name: 'Short' }), '2.json': file(2, { name: 'Long' }) }, {}, '1 900\n2 900\n', {
+    [`${PROJECTS}/C--work-p1/s-1.jsonl`]: reply('claude-haiku-5-5'),
+    [`${PROJECTS}/C--work-p2/s-2.jsonl`]: `${BIG}${reply('claude-opus-5-5')}\n`,
+  })
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p3' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(5_000)
+  expect(reads.filter(path => path.endsWith('s-1.jsonl'))).toHaveLength(1)
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  for (const model of ['claude-haiku-5-5', 'claude-opus-5-5']) {
+    expect(await ui.findAll({ type: 'Text', text: `· ${model}` })).toHaveLength(1)
+  }
+  await ui.unmount()
 })
 
 test('/sessions lists every running session with status and age, no folder', async ($, on) => {

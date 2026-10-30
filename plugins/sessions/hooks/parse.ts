@@ -164,12 +164,11 @@ export const sessionAncestor = (pid: number, table: ReadonlyMap<number, number>,
 // Keeps the given order among siblings. A session whose parent is gone is a
 // top-level row.
 export const nestRows = (rows: readonly SessionRow[]) => {
-  const pids = new Set(rows.map(row => row.pid))
-  const children = new Map<number, SessionRow[]>()
+  const ids = new Set(rows.map(row => row.id))
+  const hasParent = (row: SessionRow): row is SessionRow & { parent: string } => row.parent !== undefined && ids.has(row.parent)
+  const children = new Map<string, SessionRow[]>()
   for (const row of rows) {
-    if (row.parent !== undefined && pids.has(row.parent)) {
-      children.set(row.parent, [...(children.get(row.parent) ?? []), row])
-    }
+    if (hasParent(row)) children.set(row.parent, [...(children.get(row.parent) ?? []), row])
   }
   const nested: { row: SessionRow; depth: number }[] = []
   const placed = new Set<string>()
@@ -177,10 +176,11 @@ export const nestRows = (rows: readonly SessionRow[]) => {
     if (placed.has(row.id)) return
     placed.add(row.id)
     nested.push({ row, depth })
-    for (const child of children.get(row.pid ?? -1) ?? []) place(child, depth + 1)
+    for (const child of children.get(row.id) ?? []) place(child, depth + 1)
   }
-  for (const row of rows) if (row.parent === undefined || !pids.has(row.parent)) place(row, 0)
-  // A reused pid can close a loop with no top: those rows must still show.
+  for (const row of rows) if (!hasParent(row)) place(row, 0)
+  // Desktop and process-table links that disagree can close a loop with no
+  // top: those rows must still show.
   for (const row of rows) place(row, 0)
   return nested
 }
