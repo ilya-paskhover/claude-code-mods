@@ -143,6 +143,10 @@ In the session, `claude plugin list` should then show `<mod>@mod-branch` enabled
 
 Each mod's `tsconfig.json` extends the type declarations the engine writes into `.claude-plugin/types/` when it loads the mod (gitignored), so `tsc -p plugins/notes` works once the mod has loaded once.
 
+### Releases
+
+Bump `version` in a mod's `.claude-plugin/plugin.json` and merge to `main`: a workflow creates the release, tagged `<mod>-v<version>`, with the commits that touched that mod as its notes. See [`release.sh`](.github/scripts/release.sh). Run it with `DRY_RUN=1` to see what it would create. Installs don't depend on releases: the marketplace reads `plugin.json` from the repository.
+
 ### Reviewing a PR
 
 `.claude/settings.json` enables two review plugins for every session in this repo, cloud sessions included, so Claude Code asks once to trust their marketplaces: Addy Osmani's [`agent-skills`](https://github.com/addyosmani/agent-skills) and Anthropic's [`pr-review-toolkit`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/pr-review-toolkit).
