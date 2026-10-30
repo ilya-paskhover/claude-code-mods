@@ -140,7 +140,12 @@ Each mod's `tsconfig.json` extends the type declarations the engine writes into 
 
 ### Reviewing a PR
 
-`.claude/settings.json` enables Anthropic's [`pr-review-toolkit`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/pr-review-toolkit) for every session in this repo, cloud sessions included, so Claude Code asks once to trust the `claude-plugins-official` marketplace. Run `/pr-review-toolkit:review-pr errors tests comments` for a review: on [#12](https://github.com/ilya-paskhover/claude-code-mods/pull/12) and [#16](https://github.com/ilya-paskhover/claude-code-mods/pull/16) those three agents found nearly everything the full set did, with much less noise. Add `types` when a PR changes types; `all` runs every agent.
+`.claude/settings.json` enables two review plugins for every session in this repo, cloud sessions included, so Claude Code asks once to trust their marketplaces: Addy Osmani's [`agent-skills`](https://github.com/addyosmani/agent-skills) and Anthropic's [`pr-review-toolkit`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/pr-review-toolkit).
+
+1. Run `/agent-skills:code-review-and-quality` first: one agent, one report, few false alarms.
+2. For a risky PR, add `/pr-review-toolkit:review-pr errors tests`, which finds what the first one misses about error handling and tests. Add `comments` or `types` when those changed; `all` runs every agent.
+
+On [#16](https://github.com/ilya-paskhover/claude-code-mods/pull/16) the two together found every issue, and neither did alone (see the comparison comments there and on [#12](https://github.com/ilya-paskhover/claude-code-mods/pull/12)).
 
 ## License
 
