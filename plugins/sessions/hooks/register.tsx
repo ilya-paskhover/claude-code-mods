@@ -2,7 +2,21 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { SessionRow } from '../types'
-import { ago, cloudSessionId, look, parseCloudSessions, parseSession, sortRows, switchLink } from './parse'
+import {
+  ago,
+  cloudSessionId,
+  look,
+  nestRows,
+  parseCloudSessions,
+  parseDesktopSession,
+  parseProcessTable,
+  parseSession,
+  projectFolder,
+  sessionAncestor,
+  sortRows,
+  switchLink,
+  transcriptModel,
+} from './parse'
 
 // Claude Code writes one <pid>.json per running session into its config
 // folder's sessions/ directory. That file is the engine's own, not mod API.
@@ -24,6 +38,22 @@ const error = atom({ plugin: 'sessions', key: 'error' } as const, '')
 // must not reopen a pane the person closed.
 const autoOpened = atom({ plugin: 'sessions', key: 'autoOpened' } as const, false)
 const cloud = atom({ plugin: 'sessions', key: 'cloud' } as const, false)
+// Session id to the id of the session that spawned it, null for none. Ids,
+// not pids: a pid can be reused by a later session, a session id never is.
+const parents = atom({ plugin: 'sessions', key: 'parents' } as const, {})
+// Session id to the model its transcript named, so a transcript is no longer
+// read once it has named one.
+const models = atom({ plugin: 'sessions', key: 'models' } as const, {})
+// A lookup that couldn't finish (process table unread, a session file mid-write,
+// no model in the transcript yet) is tried again after this long, not every refresh.
+const RETRY_MS = 60_000
+// A failed table read is often just a busy machine, so it starts over soon,
+// doubling up to RETRY_MS since each try costs a process.
+const FIRST_PARENT_RETRY_MS = 5_000
+const retryParent = new Map<string, { at: number; wait: number }>()
+const retryModel = new Map<string, number>()
+// What $.fs.read refuses: a long session's transcript passes it.
+const READ_LIMIT = 4 * 1024 * 1024
 
 type Listing = { found: SessionRow[]; problem: string }
 
@@ -34,10 +64,126 @@ async function sessionsDir($: EngineInterface) {
   return home === undefined ? undefined : `${home.replace(/[\\/]+$/, '')}/.claude/sessions`
 }
 
-async function localRows($: EngineInterface): Promise<Listing> {
+const isWindows = async ($: EngineInterface) => (await $.env.get('OS')) === 'Windows_NT'
+
+// undefined when the table couldn't be read: the command failed, or printed nothing usable.
+async function processTable($: EngineInterface) {
+  const argv = (await isWindows($))
+    ? ['powershell', '-NoProfile', '-Command', "Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId, $_.ParentProcessId -join ' ' }"]
+    : ['ps', '-A', '-o', 'pid=,ppid=']
+  const ran = await $.process.run(argv, { timeoutMs: 10_000 }).catch((err: unknown) => {
+    $.ui.log(`sessions: process table: ${String(err)}`, { to: 'debug' })
+    return undefined
+  })
+  const table = ran?.exitCode === 0 ? parseProcessTable(ran.stdout) : new Map<number, number>()
+  if (ran !== undefined && table.size === 0) {
+    $.ui.log(`sessions: process table unread (exit ${ran.exitCode}): ${ran.stderr.slice(0, 300)}`, { to: 'debug' })
+  }
+  return table.size > 0 ? table : undefined
+}
+
+// Session files don't name a parent, so the process table links a child to the
+// session that spawned it. The link found when a session first appears is
+// kept: rereading costs a process (PowerShell on Windows) and could lose the
+// link once an intermediate shell exits and the child is reparented. "No
+// parent" is kept only from a complete look: a failed table read, or a session
+// file unreadable this refresh, is tried again, backing off to RETRY_MS.
+async function linkParents($: EngineInterface, found: SessionRow[], unreadable: number) {
+  if (found.length < 2) return found
+  const known = await read($, parents)
+  const at = await $.clock.now()
+  const due = found.some(row => !(row.id in known) && (retryParent.get(row.id)?.at ?? 0) <= at)
+  const table = due ? await processTable($) : undefined
+  const idOfPid = new Map(found.flatMap(row => (row.pid === undefined ? [] : [[row.pid, row.id] as const])))
+  const sessionPids = new Set(idOfPid.keys())
+  const linked: Record<string, string | null> = {}
+  for (const row of found) {
+    if (row.id in known) {
+      linked[row.id] = known[row.id] ?? null
+      continue
+    }
+    const ancestor = table === undefined ? undefined : sessionAncestor(row.pid ?? -1, table, sessionPids)
+    if (ancestor !== undefined) linked[row.id] = idOfPid.get(ancestor) ?? null
+    else if (table !== undefined && unreadable === 0) linked[row.id] = null
+    if (row.id in linked) retryParent.delete(row.id)
+    else if (due) {
+      const wait = retryParent.get(row.id)?.wait ?? FIRST_PARENT_RETRY_MS
+      retryParent.set(row.id, { at: at + wait, wait: Math.min(wait * 2, RETRY_MS) })
+    }
+  }
+  for (const id of retryParent.keys()) if (!found.some(row => row.id === id)) retryParent.delete(id)
+  await update($, parents, () => linked)
+  return found.map(row => ({ ...row, parent: linked[row.id] ?? undefined }))
+}
+
+// <app data>/Claude/claude-code-sessions/<org>/<user>/<host session id>.json,
+// <app data> being %APPDATA% on Windows and ~/Library/Application Support on
+// macOS; the desktop app has no Linux build.
+async function desktopFolders($: EngineInterface) {
+  const appData = await $.env.get('APPDATA')
+  const home = await $.env.get('HOME')
+  const base = appData ?? (home === undefined ? undefined : `${home}/Library/Application Support`)
+  if (base === undefined) return []
+  const subfolders = async (path: string) =>
+    (await $.fs.list(path).catch(() => [])).filter(f => f.kind === 'dir').map(f => `${path}/${f.name}`)
+  const orgs = await subfolders(`${base.replace(/[\\/]+$/, '')}/Claude/claude-code-sessions`)
+  return (await Promise.all(orgs.map(subfolders))).flat()
+}
+
+// A transcript over READ_LIMIT is read from its end, where the latest reply is.
+async function readTranscript($: EngineInterface, folder: string, name: string) {
+  const path = `${folder}/${name}`
+  const text = await $.fs.read(path).catch(() => undefined)
+  if (text !== undefined) return text
+  const entry = (await $.fs.list(folder).catch(() => [])).find(f => f.name === name)
+  if (entry === undefined || entry.size <= READ_LIMIT) return undefined
+  const argv = (await isWindows($))
+    ? ['powershell', '-NoProfile', '-Command', `Get-Content -LiteralPath '${path.replace(/'/g, "''")}' -Tail 500`]
+    : ['tail', '-n', '500', path]
+  const ran = await $.process.run(argv, { timeoutMs: 10_000 }).catch(() => undefined)
+  return ran?.exitCode === 0 ? ran.stdout : undefined
+}
+
+// The desktop app's file names the model and the session that started this one
+// (which runs under the app, not the parent, so the process table can't tell).
+// Other sessions take the model from their transcript. shortcut: a transcript's
+// model is kept once found, so a later /model never shows for those sessions;
+// reread if that matters.
+async function addDetails($: EngineInterface, found: SessionRow[], dir: string) {
+  const folders = found.some(row => row.hostSessionId !== undefined) ? await desktopFolders($) : []
+  const known = await read($, models)
+  const at = await $.clock.now()
+  const idOfHost = new Map(found.flatMap(row => (row.hostSessionId === undefined ? [] : [[row.hostSessionId, row.id] as const])))
+  const learned: Record<string, string> = {}
+  const detailed: SessionRow[] = []
+  for (const row of found) {
+    let desktop: ReturnType<typeof parseDesktopSession>
+    for (const folder of row.hostSessionId === undefined ? [] : folders) {
+      desktop = await $.fs.read(`${folder}/${row.hostSessionId}.json`).then(parseDesktopSession).catch(() => undefined)
+      if (desktop !== undefined) break
+    }
+    let model = desktop?.model ?? known[row.id]
+    if (model === undefined && (retryModel.get(row.id) ?? 0) <= at) {
+      const text = await readTranscript($, `${dir.replace(/sessions$/, 'projects')}/${projectFolder(row.cwd)}`, `${row.id}.jsonl`)
+      model = text === undefined ? undefined : transcriptModel(text)
+      if (model === undefined) retryModel.set(row.id, at + RETRY_MS)
+    }
+    if (model !== undefined && desktop?.model === undefined) learned[row.id] = model
+    const startedBy = desktop?.parentHost === undefined ? undefined : idOfHost.get(desktop.parentHost)
+    detailed.push({ ...row, model, parent: startedBy ?? row.parent })
+  }
+  for (const id of retryModel.keys()) if (!found.some(row => row.id === id)) retryModel.delete(id)
+  await update($, models, () => learned)
+  return detailed
+}
+
+// full false: parents and models only as earlier refreshes stored them, so no
+// process or transcript is read.
+async function localRows($: EngineInterface, full: boolean): Promise<Listing> {
   const dir = await sessionsDir($)
   const found: SessionRow[] = []
   let problem = ''
+  let unreadable = 0
   try {
     if (dir === undefined) throw new Error('no home folder')
     const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
@@ -47,6 +193,7 @@ async function localRows($: EngineInterface): Promise<Listing> {
         .then(parseSession)
         .catch(() => undefined)
       if (row !== undefined) found.push(row)
+      else unreadable++
     }
     if (files.length > 0 && found.length === 0) {
       problem = "Couldn't read any session file: Claude Code may have changed their format."
@@ -54,7 +201,12 @@ async function localRows($: EngineInterface): Promise<Listing> {
   } catch {
     problem = `No session folder found${dir === undefined ? '' : ` at ${dir}`}.`
   }
-  return { found, problem }
+  if (!full) {
+    const [linked, named] = [await read($, parents), await read($, models)]
+    return { found: found.map(row => ({ ...row, parent: linked[row.id] ?? undefined, model: named[row.id] })), problem }
+  }
+  const linked = await linkParents($, found, unreadable)
+  return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem }
 }
 
 async function cloudRows($: EngineInterface): Promise<Listing> {
@@ -70,9 +222,9 @@ async function cloudRows($: EngineInterface): Promise<Listing> {
   return { found, problem: '' }
 }
 
-async function refresh($: EngineInterface) {
+async function refresh($: EngineInterface, full = true) {
   const at = await $.clock.now()
-  const { found, problem } = (await read($, cloud)) ? await cloudRows($) : await localRows($)
+  const { found, problem } = (await read($, cloud)) ? await cloudRows($) : await localRows($, full)
   await update($, rows, () => sortRows(found))
   await update($, error, () => problem)
   await update($, now, () => at)
@@ -84,6 +236,15 @@ async function openLink($: EngineInterface, url: string) {
     (await $.env.get('OS')) === 'Windows_NT' ? ['cmd', '/c', 'start', '', url] : ['open', url]
   const ran = await $.process.run(argv).catch(() => undefined)
   if (ran === undefined || ran.exitCode !== 0) $.ui.toast("Couldn't open that session in the desktop app.")
+}
+
+// The pane opens from a quick refresh; parents and models that need a process
+// or transcript read follow on a timer, so neither a session's start nor
+// /sessions waits on them.
+async function openQuickly($: EngineInterface) {
+  await refresh($, false)
+  // A cloud row has no parent or model to fill in.
+  if (!(await read($, cloud))) $.clock.after(0, () => refresh($))
 }
 
 // Module variable on purpose: a reload drops timers, and session.start
@@ -112,7 +273,7 @@ async function autoOpen($: EngineInterface) {
   if (await read($, cloud)) return
   if (await read($, autoOpened)) return
   await update($, autoOpened, () => true)
-  await refresh($)
+  await openQuickly($)
   // Unfocused, so the prompt keeps the keyboard. Unasked, the engine draws a
   // pane only from 144 columns, or 110 once /sessions has opened it; narrower,
   // it waits for /sessions.
@@ -133,7 +294,7 @@ export const register: Register = on => {
     const id = isCloud && remoteId !== undefined ? cloudSessionId(remoteId) : await $.session.id()
     await update($, sessionId, () => id)
     if (await isPaneUp($).catch(() => false)) {
-      await refresh($)
+      await openQuickly($)
       await startTicking($)
     }
     if (e.surface === 'terminal') await autoOpen($)
@@ -151,7 +312,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'sessions' }, async $ => {
-    await refresh($)
+    await openQuickly($)
     // Focused on open: unfocused, Switch took two clicks in the desktop app,
     // likely the first giving the pane focus.
     await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })
@@ -179,12 +340,13 @@ export const register: Register = on => {
         </Box>
         {problem !== '' ? <Text color="error">{problem}</Text> : null}
         {problem === '' && list.length === 0 ? <Text dimColor>No {kind} sessions found.</Text> : null}
-        {list.map(row => {
+        {nestRows(list).map(({ row, depth }) => {
           const { dot, label, color, isDim } = look(row, at)
           const link = row.id === current ? undefined : switchLink(row)
           return (
-            <Box key={row.id} flexDirection="column">
+            <Box key={row.id} flexDirection="column" paddingLeft={depth * 2}>
               <Box flexDirection="row" gap={1}>
+                {depth > 0 ? <Text dimColor>└</Text> : null}
                 <Text color={color} dimColor={isDim}>{dot}</Text>
                 <Text bold={row.id === current} dimColor={isDim}>{row.name}</Text>
                 {link !== undefined ? (
@@ -195,6 +357,7 @@ export const register: Register = on => {
               <Box flexDirection="row" gap={1}>
                 <Text color={color} dimColor={isDim}>  {label}</Text>
                 <Text dimColor>· {ago(at - row.updatedAt)}</Text>
+                {row.model !== undefined ? <Text dimColor>· {row.model}</Text> : null}
                 {row.id === current ? <Text dimColor>· this session</Text> : null}
               </Box>
               {row.needs !== undefined ? <Text dimColor>  {row.needs}</Text> : null}
