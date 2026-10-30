@@ -71,6 +71,8 @@ Limits:
 
 ![sessions: the Sessions side pane with two running sessions and a Switch button](docs/sessions.png)
 
+![sessions: a session with two spawned children indented under it, each row naming its model](docs/sessions-nesting.png)
+
 `/sessions` opens a **Sessions** side pane listing every Claude Code session running on this machine, from any folder:
 
 - A count of running and working sessions, and a Refresh button.
