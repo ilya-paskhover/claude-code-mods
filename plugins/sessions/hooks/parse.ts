@@ -106,6 +106,85 @@ export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
   })
 }
 
+// The desktop app's own file for a session it started, not part of the mod API:
+// read defensively, and only these two fields.
+export const parseDesktopSession = (text: string) => {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const o = raw as { model?: unknown; spawnedFrom?: { sessionId?: unknown } | null }
+  return { model: str(o.model), parentHost: str(o.spawnedFrom?.sessionId) }
+}
+
+// Claude Code's transcript folder for a working directory.
+export const projectFolder = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-')
+
+// The model of the latest main-thread reply. Whole lines are parsed since a
+// tool result can quote a "model" of its own.
+export const transcriptModel = (text: string) => {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? ''
+    if (!line.includes('"assistant"')) continue
+    try {
+      const o = JSON.parse(line) as { isSidechain?: unknown; message?: { role?: unknown; model?: unknown } }
+      const model = str(o.message?.model)
+      if (o.isSidechain !== true && o.message?.role === 'assistant' && model !== undefined && model !== '<synthetic>') return model
+    } catch {
+      // A line still being written.
+    }
+  }
+  return undefined
+}
+
+// One "pid ppid" per line, as the commands in register.tsx print the process table.
+export const parseProcessTable = (text: string) => {
+  const table = new Map<number, number>()
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line)
+    if (match !== null) table.set(Number(match[1]), Number(match[2]))
+  }
+  return table
+}
+
+// The nearest ancestor that is a session: a child usually runs under shells.
+export const sessionAncestor = (pid: number, table: ReadonlyMap<number, number>, sessionPids: ReadonlySet<number>) => {
+  const seen = new Set([pid])
+  for (let at = table.get(pid); at !== undefined && !seen.has(at); at = table.get(at)) {
+    if (sessionPids.has(at)) return at
+    seen.add(at)
+  }
+  return undefined
+}
+
+// Keeps the given order among siblings. A session whose parent is gone is a
+// top-level row.
+export const nestRows = (rows: readonly SessionRow[]) => {
+  const ids = new Set(rows.map(row => row.id))
+  const hasParent = (row: SessionRow): row is SessionRow & { parent: string } => row.parent !== undefined && ids.has(row.parent)
+  const children = new Map<string, SessionRow[]>()
+  for (const row of rows) {
+    if (hasParent(row)) children.set(row.parent, [...(children.get(row.parent) ?? []), row])
+  }
+  const nested: { row: SessionRow; depth: number }[] = []
+  const placed = new Set<string>()
+  const place = (row: SessionRow, depth: number) => {
+    if (placed.has(row.id)) return
+    placed.add(row.id)
+    nested.push({ row, depth })
+    for (const child of children.get(row.id) ?? []) place(child, depth + 1)
+  }
+  for (const row of rows) if (!hasParent(row)) place(row, 0)
+  // Desktop and process-table links that disagree can close a loop with no
+  // top: those rows must still show.
+  for (const row of rows) place(row, 0)
+  return nested
+}
+
 export const ago = (ms: number) => {
   const minutes = Math.floor(Math.max(0, ms) / 60_000)
   if (minutes < 1) return 'now'
