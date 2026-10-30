@@ -14,9 +14,12 @@ permissions:
 
 jobs:
   release:
+    # A manual run can pick any branch: a tag made there would stick to unmerged
+    # code, and the script would skip that version once it really merges.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
