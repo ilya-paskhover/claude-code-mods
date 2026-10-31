@@ -4,7 +4,7 @@ Small mods for [Claude Code](https://claude.com/claude-code), built on its funct
 
 | Mod | What it does |
 | --- | --- |
-| [turn-pulse](plugins/turn-pulse) | A band above the prompt summarizing the last turn, plus a live status line while Claude works. |
+| [turn-pulse](plugins/turn-pulse) | A status line summarizing the last turn, live while Claude works, with an optional band above the prompt. |
 | [notes](plugins/notes) | `/note` saves chat text to a notes list shared across projects; `/notes` opens it in a side pane. |
 | [sessions](plugins/sessions) | `/sessions` opens a side pane listing the sessions running on this machine and whether each is working or idle. |
 
@@ -36,16 +36,28 @@ This installs in the user scope, so the mod loads in every new session, includin
 
 ## turn-pulse
 
-![turn-pulse: the last-turn band above the prompt and the session total in the status line](docs/turn-pulse.png)
+Between turns the status line shows the last turn and the session's spend:
 
-A band labeled **◆ last turn** sits above the prompt after each turn:
+```
+last turn 35s · no edits · 3 ok · session: 5h +2% · week +0%
+```
 
-- **Duration** of the turn, in yellow past 2 minutes.
-- **Files edited**, in green. An edit **outside the session's working folder** shows in bold red, with a 15 second toast.
-- **Tool results**: `✓ N ok`, and `✗ N failed (Tool ×n)` when something failed.
-- **Usage-limit cost** of the turn, for example `5h +1% · week +0.3%`.
+- **Duration** of the turn.
+- **Files edited**: the first 3, then `+N`. An edit **outside the session's working folder** shows as `⚠ outside: name`, with a 15 second toast.
+- **Tool results**: `N ok`, and `N failed (Tool ×n)` when something failed.
+- **Usage-limit spend** of the session so far.
 
-The status line shows `▶ Tool · N ok · ✗ N failed` live during a turn, and `session: 5h +6% · week +2%` between turns. A toast appears when a turn takes 60 seconds or more. `/pulse` hides or shows the band. In a cloud session `/pulse` prints the last turn and the session total as text instead, since the Claude app showing the session may not draw the band or the status line.
+During a turn the status line shows `▶ Tool · N ok · ✗ N failed` live. A toast appears when a turn takes 60 seconds or more.
+
+The band above the prompt is optional and off by default, so it leaves the slot to other mods:
+
+![turn-pulse: the last-turn band above the prompt](docs/turn-pulse.png)
+
+- `/pulse band on` or `/pulse band off` sets it, and `/pulse band` switches it. The band's **Hide** button also turns it off. The choice is kept across sessions and projects.
+- The band labels the row **◆ last turn** and shows the same parts in color, with the **turn's** usage-limit cost rather than the session's. The duration turns yellow past 2 minutes.
+- When on, it shares the slot: another mod's band draws below it.
+
+`/pulse` says whether the band is on. In a cloud session `/pulse` prints the last turn and the session total as text instead, since the Claude app showing the session may not draw the band or the status line.
 
 Limits:
 
