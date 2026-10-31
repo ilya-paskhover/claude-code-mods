@@ -12,7 +12,11 @@ const setup = (on: On, env: Record<string, string> = {}) => {
   on('session.cwd', () => ({ value: 'D:\\proj' }) as never)
   on('session.start', ($, e) => ({ cwd: (e as { cwd: string }).cwd }) as never)
   on('session.measure', () => ({ changed: [] }) as never)
-  on('command.register', () => ({ value: { command: 'pulse' } }) as never)
+  const commands: { name: string; argumentHint?: string }[] = []
+  on('command.register', ($, e) => {
+    commands.push(e as { name: string; argumentHint?: string })
+    return { value: { command: 'pulse' } } as never
+  })
   on('session.usage', () =>
     ({ value: { startedAt: 0, context: {}, rateLimits: usage.limits } }) as never,
   )
@@ -36,7 +40,7 @@ const setup = (on: On, env: Record<string, string> = {}) => {
     store.set(key, value)
     return { value: undefined } as never
   })
-  return { clock, toasts, statuses, usage, store }
+  return { clock, toasts, statuses, usage, store, commands }
 }
 
 const BAND_ON = { command: 'pulse', args: 'band on' } as never
@@ -237,6 +241,14 @@ test('/pulse band sets, switches and saves the state; a bad argument changes not
   expect(await pulse('band maybe')).toBe('Usage: /pulse band [on|off]')
   expect(await pulse('nonsense')).toBe('Usage: /pulse band [on|off]')
   expect(store.get('isBandOn')).toBe(false)
+})
+
+test('/pulse registers with the band argument in its hint', async ($, on) => {
+  const { commands } = setup(on)
+
+  await $.session.start({ source: 'startup', cwd: 'D:\\proj' } as never)
+
+  expect(commands.map(({ name, argumentHint }) => [name, argumentHint])).toEqual([['pulse', 'band [on|off]']])
 })
 
 test('a saved choice turns the band on in a new session', async ($, on) => {
