@@ -1,6 +1,6 @@
 {
   "name": "claude-code-mods",
-  "description": "Small Claude Code mods: a last-turn summary band, a cross-project notes pane, and a running-sessions pane.",
+  "description": "Small Claude Code mods: a last-turn summary status line, a cross-project notes pane, and a running-sessions pane.",
   "owner": {
     "name": "Ilya Paskhover",
     "url": "https://github.com/ilya-paskhover"
@@ -9,7 +9,7 @@
     {
       "name": "turn-pulse",
       "source": "./plugins/turn-pulse",
-      "description": "A band above the prompt summarizing the last turn: duration, files edited, tool results, usage-limit cost."
+      "description": "A status line summarizing the last turn: duration, files edited, tool results, usage-limit cost. Optional band above the prompt."
     },
     {
       "name": "notes",

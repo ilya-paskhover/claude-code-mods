@@ -21,7 +21,7 @@ declare module 'claude-code' {
   interface PluginState {
     'turn-pulse': {
       last: Pulse | null
-      isHidden: boolean
+      isBandOn: boolean
       windows: Record<string, WindowTrack>
     }
   }

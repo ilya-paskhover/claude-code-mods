@@ -4,7 +4,7 @@ import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 import type { EditedFile, Pulse, WindowTrack } from '../types'
 
 const last = atom({ plugin: 'turn-pulse', key: 'last' } as const, null)
-const isHidden = atom({ plugin: 'turn-pulse', key: 'isHidden' } as const, false)
+const isBandOn = atom({ plugin: 'turn-pulse', key: 'isBandOn' } as const, false)
 const windows = atom({ plugin: 'turn-pulse', key: 'windows' } as const, {})
 
 const EDITING = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
@@ -73,16 +73,18 @@ async function measure($: EngineInterface, limits?: SessionRateLimit[]) {
   return sessionSpent(tracks)
 }
 
-function idleStatus($: EngineInterface, spent: Record<string, number>) {
-  $.ui.status(Object.keys(spent).length > 0 ? `session: ${formatSpent(spent)}` : undefined)
-}
-
 const isCloud = async ($: EngineInterface) => (await $.env.get('CLAUDE_CODE_REMOTE')) === 'true'
+
+// The state redraws the band; the store carries the choice to other sessions.
+async function setBand($: EngineInterface, isOn: boolean) {
+  await update($, isBandOn, () => isOn)
+  await $.store.set('isBandOn', isOn)
+}
 
 // A pulse saved by an older version of this mod has another shape: skip it.
 const isCurrent = (pulse: Pulse | null): pulse is Pulse => pulse !== null && typeof pulse.ok === 'number'
 
-// The parts of a pulse the band and /pulse both show.
+// The parts of a pulse the band, the status line and /pulse all show.
 function describe(pulse: Pulse) {
   const outside = pulse.files.filter(file => file.isOutside)
   const inside = pulse.files.filter(file => !file.isOutside)
@@ -111,6 +113,22 @@ function summarize(pulse: Pulse) {
   if (fails > 0) parts.push(`✗ ${fails} failed (${failures})`)
   if (Object.keys(spent).length > 0) parts.push(formatSpent(spent))
   return parts.join(' · ')
+}
+
+// The status line between turns: the last turn, then the session's spend.
+function idleStatus($: EngineInterface, pulse: Pulse | null, spent: Record<string, number>) {
+  const parts: string[] = []
+  if (isCurrent(pulse)) {
+    const { outside, inside, shown, more, fails, failures } = describe(pulse)
+    parts.push(`last turn ${formatTime(pulse.seconds)}`)
+    if (outside.length > 0) parts.push(`⚠ outside: ${outside.map(file => file.name).join(', ')}`)
+    if (inside.length > 0) parts.push(`${shown}${more}`)
+    if (pulse.files.length === 0) parts.push('no edits')
+    parts.push(`${pulse.ok} ok`)
+    if (fails > 0) parts.push(`${fails} failed (${failures})`)
+  }
+  if (Object.keys(spent).length > 0) parts.push(`session: ${formatSpent(spent)}`)
+  $.ui.status(parts.length > 0 ? parts.join(' · ') : undefined)
 }
 
 export const register: Register = on => {
@@ -166,7 +184,7 @@ export const register: Register = on => {
     )
     const pulse: Pulse = { seconds, ok, files: [...files.values()], failed: { ...failed }, spent }
     await update($, last, () => pulse)
-    idleStatus($, spentNow)
+    idleStatus($, pulse, spentNow)
 
     const outside = pulse.files.filter(file => file.isOutside)
     const fails = countFails(failed)
@@ -184,19 +202,30 @@ export const register: Register = on => {
   // Pushed when a window moves a whole point, also between turns.
   on('session.measure', async ($, e, next) => {
     const spent = await measure($, e.rateLimits)
-    if (!inTurn) idleStatus($, spent)
+    if (!inTurn) idleStatus($, await read($, last), spent)
 
     return next(e)
   })
 
-  // Cloud sessions draw no band, so there /pulse prints the last turn as
-  // text instead of toggling the band.
   on('command.run', { command: 'pulse' }, async ($, e, next) => {
-    if (!(await isCloud($))) {
-      const hidden = await read($, isHidden)
-      await update($, isHidden, () => !hidden)
+    const isOn = await read($, isBandOn)
+    const [word, choice, ...rest] = e.args.trim().split(/\s+/)
 
-      return { text: hidden ? 'Turn pulse band shown.' : 'Turn pulse band hidden.' }
+    if (word === 'band') {
+      if ((choice !== undefined && choice !== 'on' && choice !== 'off') || rest.length > 0) {
+        return { text: 'Usage: /pulse band [on|off]' }
+      }
+      const wanted = choice === undefined ? !isOn : choice === 'on'
+      await setBand($, wanted)
+
+      return { text: `Turn pulse band ${wanted ? 'on' : 'off'}.` }
+    }
+    if (word !== '') return { text: 'Usage: /pulse band [on|off]' }
+
+    // Cloud sessions may draw neither the band nor the status line, so there
+    // /pulse prints the last turn as text.
+    if (!(await isCloud($))) {
+      return { text: `Turn pulse band is ${isOn ? 'on' : 'off'}. Change it with /pulse band [on|off].` }
     }
 
     const pulse = await read($, last)
@@ -210,23 +239,33 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'pulse',
-      description: (await isCloud($)) ? 'Print the last turn summary' : 'Show or hide the turn pulse band',
+      description: (await isCloud($)) ? 'Print the last turn summary' : 'Show the turn pulse band state',
+      argumentHint: 'band [on|off]',
     })
-    idleStatus($, await measure($))
+    // Only a stored true turns the band on: anything else in the store means off.
+    const isOn = (await $.store.get('isBandOn')) === true
+    await update($, isBandOn, () => isOn)
+    const spent = await measure($)
+    const pulse = await read($, last)
+    if (isCurrent(pulse)) idleStatus($, pulse, spent)
 
     return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const pulse = await read($, last)
-    if (e.props.hasSurvey || !isCurrent(pulse) || (await read($, isHidden))) {
+    if (e.props.hasSurvey || !isCurrent(pulse) || !(await read($, isBandOn))) {
       return next(e)
     }
+
+    // Other mods share this slot: draw theirs below ours instead of replacing it.
+    // next(e) rejects only when nothing answers beneath (the test harness): the band still draws.
+    const below = await next(e).catch(() => undefined)
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const { outside, inside, shown, more, fails, failures, spent } = describe(pulse)
 
-    return (
+    const mine = (
       <Box flexDirection="row" gap={1}>
         <Text color="claude" bold>◆ last turn</Text>
         <Text color={pulse.seconds > SLOW_SECONDS ? 'warning' : 'success'}>⏱ {formatTime(pulse.seconds)}</Text>
@@ -241,8 +280,10 @@ export const register: Register = on => {
         {fails > 0 ? <Text color="error">✗ {fails} failed ({failures})</Text> : null}
         {Object.keys(spent).length > 0 ? <Text dimColor>│</Text> : null}
         {Object.keys(spent).length > 0 ? <Text color="suggestion">{formatSpent(spent)}</Text> : null}
-        <Button key="hide" label="Hide" onPress={() => update($, isHidden, () => true)} />
+        <Button key="hide" label="Hide" onPress={() => setBand($, false)} />
       </Box>
     )
+
+    return below ? <Box flexDirection="column">{mine}{below}</Box> : mine
   })
 }
