@@ -34,6 +34,26 @@ claude plugin install sessions@claude-code-mods
 
 This installs in the user scope, so the mod loads in every new session, including sessions the desktop app starts. Inside an interactive `claude` session, `/plugin marketplace add` and `/plugin install` take the same arguments. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
 
+To update, refresh the marketplace, then update each mod you installed:
+
+```
+claude plugin marketplace update claude-code-mods
+```
+
+```
+claude plugin update turn-pulse@claude-code-mods
+```
+
+```
+claude plugin update notes@claude-code-mods
+```
+
+```
+claude plugin update sessions@claude-code-mods
+```
+
+Restart running sessions to apply an update.
+
 ## turn-pulse
 
 Between turns the status line shows the last turn and the session's spend:
@@ -81,9 +101,10 @@ Limits:
 
 ## sessions
 
-![sessions: the Sessions side pane with two running sessions and a Switch button](docs/sessions.png)
-
-![sessions: a session with two spawned children indented under it, each row naming its model](docs/sessions-nesting.png)
+<table><tr>
+<td valign="top"><img src="docs/sessions.png" width="311" alt="sessions: the Sessions side pane with two running sessions and a Switch button"></td>
+<td valign="top"><img src="docs/sessions-nesting.png" width="347" alt="sessions: a session with two spawned children indented under it, each row naming its model"></td>
+</tr></table>
 
 `/sessions` opens a **Sessions** side pane listing every Claude Code session running on this machine, from any folder:
 
