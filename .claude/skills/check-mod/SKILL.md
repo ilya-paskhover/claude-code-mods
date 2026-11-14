@@ -1,6 +1,6 @@
 ---
 name: check-mod
-description: Check the mods a branch or PR changes in this repo; a PR or branch other than the checked-out one is checked in a separate worktree. Runs a code review subagent in the background alongside `claude plugin validate`, `claude plugin test` and a type check on each changed plugin under plugins/, tells a failure the branch caused from one already on main, and verifies each review finding. Then the live check: in a cloud session it writes a prompt the user pastes into Claude Code on their own computer; on the user's computer it runs the live check itself, step by step with the user. Use when asked to check, test, review or verify a mod change, a branch or a PR here, or "test it locally".
+description: Check the mods a branch or PR changes in this repo; a PR or branch other than the checked-out one is checked in a separate worktree. Runs a code review subagent in the background alongside `claude plugin validate`, `claude plugin test` and a type check on each changed plugin under plugins/, tells a failure the branch caused from one already on main, and verifies each review finding. Then the live check: in a cloud session it runs what shows in data with real sessions there and writes a prompt the user pastes into Claude Code on their own computer; on the user's computer it runs the live check itself, step by step with the user. Use when asked to check, test, review or verify a mod change, a branch or a PR here, or "test it locally".
 argument-hint: "[PR number or branch, default the checked-out branch] [--base <ref>, default origin/main] [--second-review] [--live-only]"
 ---
 
@@ -12,10 +12,10 @@ This skill:
 2. Runs the automated checks while the review runs.
 3. Checks each review finding against the code.
 4. Does the live check, which depends on where it runs (step 7):
-   - **Cloud session** (`CLAUDE_CODE_REMOTE` is `true`): it can't do the live check. Mod panes don't show in live cloud sessions (issue #14), and the desktop app and the user's real sessions aren't in the container. So it writes a prompt for the user's own computer.
+   - **Cloud session** (`CLAUDE_CODE_REMOTE` is `true`): mod panes don't show in live cloud sessions (issue #14), and the desktop app and the user's real sessions aren't in the container. So it checks what it can at the data level with real sessions here, then writes a prompt for the user's own computer for the rest.
    - **The user's computer** (any other value, or unset): it runs the live check itself, with the user watching the pane.
 
-Never report a mod as working from the automated checks and review alone. In a cloud session, say that the live check is still to do.
+Never report a mod as working from the automated checks, review and data-level check alone. In a cloud session, say that the pane itself is still to check.
 
 ## 1. Pick what to check
 
@@ -95,24 +95,45 @@ When each reviewer reports, check every finding against the code yourself before
 
 ## 7. The live check
 
-Find out where this session runs: `echo "$CLAUDE_CODE_REMOTE"`. `true` is a cloud session (7a); anything else is the user's computer (7b).
+Find out where this session runs: `echo "$CLAUDE_CODE_REMOTE"`. `true` is a cloud session (7a, then 7b); anything else is the user's computer (7c).
 
 In both, plan the live steps from the diff first: numbered, each with what to do and what the user should see if it works. Include:
 - A restart, or a second session, where the change keeps state across sessions.
 - The desktop app, if the change touches what it draws or opens.
 - A step that tries each confirmed or plausible review finding live, where one can be seen in the pane.
 
-### 7a. Cloud session: write the live-check prompt
+### 7a. Cloud session: the data-level live check
+
+A cloud session can't draw a pane (#14), but it can run the rest for real: Claude Code sessions in this container, the engine's own session files and process table, the mod's hooks and its store. So check here every planned step whose result shows in data, and leave only the drawing to the user's computer.
+
+**Which steps.** A step qualifies when the mod has a slash command whose hooks do the work (they run with `claude --plugin-dir <mod> -p "/<command>"`, no model call), and its result lands somewhere you can read: the mod's store, a file it writes, the command's own text. Steps that are only about the drawing (colors, layout, a button press, the desktop app) don't qualify. If none qualifies, say so and go on to 7b.
+
+**How.** Write the scenario as a bash script in the scratchpad that sources `.claude/skills/check-mod/live.sh` (in the current checkout); its header has the usage and the pitfalls. Start every script with `live_begin <mod folder>` and `trap live_end EXIT`: that turns off the installed copy of the mod for the run, and puts everything back however the script ends. Within a script:
+
+- `live_bg` and `live_detached` start real sessions (a short model turn each: keep them to `sleep N` through the Bash tool, N under 60).
+- `live_command <command>` runs one refresh, or whatever the mod's command does.
+- `live_store <key>` reads the mod's store. `live_field` reads a session file.
+- `live_file` makes a file the step needs, such as a stray file under `~/.claude`. The container is disposable, but still only create what the step needs: `live_end` deletes it.
+
+Print one line per thing the step expects, labelled.
+
+**Control run.** Run the same script against the base commit's copy of the mod too (a second worktree at `<base>`). A step that gives the same result on both doesn't show the change at work: say so, and make the scenario sharper if you can. For a bug fix, the base should show the bug.
+
+**Afterwards.** Confirm `claude plugin list` shows the installed copy as before and no test session is left (`pgrep -af "claude -p"`). Remove the extra worktrees.
+
+Report each data-checked step with what the change's copy gave, what the base gave, and that the pane itself wasn't drawn.
+
+### 7b. Cloud session: write the live-check prompt
 
 Write a prompt the user pastes into Claude Code on their own computer. Save it in the scratchpad directory as `check-<branch>.md` (the branch name with `/` replaced by `-`), send it with SendUserFile, and also show it in the reply.
 
-Start it with: "If this repo has `.claude/skills/check-mod/`, run `/check-mod <PR number or branch> --live-only` and stop reading here; otherwise follow the steps below." That skill, on their computer, does 7b.
+Start it with: "If this repo has `.claude/skills/check-mod/`, run `/check-mod <PR number or branch> --live-only` and stop reading here; otherwise follow the steps below." That skill, on their computer, does 7c.
 
 The rest must stand alone: the session that reads it has none of this conversation. It contains:
 
 1. **What to check out**: the repository (`ilya-paskhover/claude-code-mods`), the branch, the commit checked here, and the PR number if there is one. Fetch and switch to the branch. If there are uncommitted changes, stop and ask.
 2. **The automated checks again on their machine**: `claude plugin test` and `claude plugin validate` for each changed mod, with the pass count you saw.
-3. **The live check**: how to load the branch's copy without touching the installed one. Either `claude --plugin-dir <clone>/plugins/<mod>`, or the `CLAUDE_CODE_PLUGIN_DIRS` route in the README's development section; both need the marketplace copy of that mod disabled or uninstalled first so it doesn't load twice, and re-enabled at the end. Then the planned steps, one at a time, waiting for the user after each.
+3. **The live check**: how to load the branch's copy without touching the installed one. Either `claude --plugin-dir <clone>/plugins/<mod>`, or the `CLAUDE_CODE_PLUGIN_DIRS` route in the README's development section; both need the marketplace copy of that mod disabled or uninstalled first so it doesn't load twice, and re-enabled at the end. Then the planned steps, one at a time, waiting for the user after each. For a step 7a already checked at the data level, say what the data showed and keep only what the user should see in the pane, so it's a quick look rather than the whole scenario again.
 4. **The report**: one table, with every check and step as pass, fail or skipped.
 5. **No commits, pushes or PR comments** unless the user asks.
 
@@ -122,7 +143,7 @@ If the user would rather do the live check in a cloud session, mention the READM
 
 If the prompt is ready before the review is in, send it, and give the review findings when they arrive.
 
-### 7b. The user's computer: run the live check
+### 7c. The user's computer: run the live check
 
 You can do everything around the pane, but you can't see it or press its buttons. So split each step: do the actions yourself, read the data the pane draws from, and ask the user what the pane shows.
 
@@ -139,7 +160,7 @@ You can do everything around the pane, but you can't see it or press its buttons
    - Create or delete a file the step needs. Ask first for anything outside the worktree, such as files under `~/.claude`.
    - Quit a process you started.
 2. **Leave to the user** what only they can do: type in the test session, press a button in the pane, restart their session, open the desktop app.
-3. **Read the state the pane draws from** where it exists, without printing anything that isn't the mod's. For example, the session files in `~/.claude/sessions/`, or the mod's own store entry. That tells "the data is wrong" apart from "the drawing is wrong".
+3. **Read the state the pane draws from** where it exists, without printing anything that isn't the mod's. For example, the session files in `~/.claude/sessions/`, or the mod's own store entry. That tells "the data is wrong" apart from "the drawing is wrong". The helpers in `live.sh` work here too (`live_field`, `live_store`, `live_bg`), but here the user's own sessions are in the same folders: never stop a session you didn't start, and ask before `live_begin` turns off their installed copy. `live_begin` also moves the mod's existing `--plugin-dir` stores aside (it prints where) and `live_end` puts them back, so run it only when the user's own sessions don't have that mod loaded inline, or their store writes during the run are lost.
 4. **Ask what the pane shows** with AskUserQuestion. Put the expected result in the question, with the options Pass, Fail and Skip. Ask for a note on Fail.
 5. **On a fail**, find the cause in the code before going on, and report it with the file and line. Don't change the code unless the user asks.
 
@@ -159,6 +180,6 @@ If the session has a computer-use or browser tool and the step needs the desktop
 - One line per mod and check, as the script printed, with the cause of each failure the branch caused.
 - What was skipped and why.
 - The review: which reviewer(s) ran, then each confirmed or plausible finding with the file, line, why and how it fails, and the dropped ones in one line each. "Nothing blocks" when that's the result.
-- Cloud: the path of the live-check prompt.
+- Cloud: each data-checked step with this copy's result and the base's, then the path of the live-check prompt.
 - The user's computer: one table with every live step as pass, fail or skipped, a note for each fail or skip, and what the data showed where you read it. Then confirm the cleanup is done.
 - Last, in a cloud session: whether the change is ready for its live check, or what has to be fixed first. On the user's computer: whether it's ready to merge, or what has to be fixed first.
