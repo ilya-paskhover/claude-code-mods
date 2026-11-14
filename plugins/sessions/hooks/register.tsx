@@ -315,9 +315,11 @@ export const register: Register = on => {
     await openQuickly($)
     // Focused on open: unfocused, Switch took two clicks in the desktop app,
     // likely the first giving the pane focus.
-    await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })
+    const opened = await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })
     await startTicking($)
 
+    // Say when no surface draws it (#14), rather than claim it opened.
+    if (!opened.isPlaced) return { text: `Sessions pane is open but not drawn: ${opened.reason}` }
     return { text: 'Sessions pane opened.' }
   })
 
