@@ -6,6 +6,7 @@ import {
   cloudSessionId,
   foldRows,
   HISTORY_MS,
+  legend,
   look,
   mergeHistory,
   nestRows,
@@ -176,7 +177,8 @@ test('the pane draws a spawned session under its parent and reads the table only
     const names = await ui.findAll({ type: 'Text', text: /^(Parent|Child|Other)$/ })
     expect(names.map(n => (n as { text: string }).text)).toEqual(['Other', 'Parent', 'Child'])
     expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(1)
-    expect(await ui.findAll({ type: 'Text', text: /^3 running$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^● 1 working$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^○ 2 idle$/ })).toHaveLength(1)
     await ui.unmount()
   }
 
@@ -415,8 +417,8 @@ test('/sessions lists every running session with status and age, no folder', asy
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
-    expect(await ui.findAll({ type: 'Text', text: /^2 running$/ })).toHaveLength(1)
-    expect(await ui.findAll({ type: 'Text', text: /^· 1 working$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^● 1 working$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^○ 1 idle$/ })).toHaveLength(1)
     const names = await ui.findAll({ type: 'Text', text: /^(Fix login|Publish mods)$/ })
     expect(names.map(n => (n as { text: string }).text)).toEqual(['Publish mods', 'Fix login'])
     expect(await ui.findAll({ type: 'Text', text: /^\s*working$/ })).toHaveLength(1)
@@ -555,7 +557,9 @@ test('a cloud session lists recent cloud sessions with an Open link and what eac
 
   for (const surface of [...SURFACES, 'mobile'] as const) {
     const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
-    expect(await ui.findAll({ type: 'Text', text: /^3 recent$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^● 1 working$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^◐ 1 needs input$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^○ 1 idle$/ })).toHaveLength(1)
     expect(await ui.findAll({ type: 'Text', text: /^\s*needs input$/ })).toHaveLength(1)
     expect(await ui.findAll({ type: 'Text', text: /^\s*Approve the push$/ })).toHaveLength(1)
     expect(await ui.findAll({ type: 'Text', text: /^· 3h$/ })).toHaveLength(1)
@@ -643,6 +647,18 @@ test('folding hides the sessions under a row and counts them', () => {
   expect(shape({ 's-5': true })).toEqual(shape({}))
 })
 
+test('the header counts each status with its row dot and color, ended last', () => {
+  const row = (pid: number, status: string, updatedAt = NOW) => ({ ...parseSession(file(pid, { status, updatedAt }))!, status })
+  const rows = [row(1, 'ended'), row(2, 'idle'), row(3, 'busy', NOW - STALE_MS - 1), row(4, 'idle'), row(5, 'paused')]
+  expect(legend(rows, NOW).map(({ dot, count, label, color }) => [dot, count, label, color])).toEqual([
+    ['●', 1, 'working', 'warning'],
+    ['○', 2, 'idle', 'success'],
+    ['·', 1, 'paused', undefined],
+    ['·', 1, 'ended', undefined],
+  ])
+  expect(legend([], NOW)).toEqual([])
+})
+
 test('an ended session stays listed after a restart, and the pane folds and hides', async ($, on) => {
   const parent = { ...parseSession(file(1, { name: 'Parent', updatedAt: NOW - 3_600_000 }))!, pid: undefined, status: 'ended', seenAt: NOW - 3_600_000 }
   const files: Record<string, string> = {
@@ -660,7 +676,7 @@ test('an ended session stays listed after a restart, and the pane folds and hide
     const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
     const names = async () => (await ui.findAll({ type: 'Text', text: /^(Parent|Child|Grandchild)$/ })).map(n => (n as { text: string }).text)
     expect(await names()).toEqual(['Parent', 'Child', 'Grandchild'])
-    expect(await ui.findAll({ type: 'Text', text: /^2 running$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^○ 2 idle$/ })).toHaveLength(1)
     expect(await ui.findAll({ type: 'Text', text: /^· 1 ended$/ })).toHaveLength(1)
 
     await ui.press({ key: 'fold:s-5' })
@@ -690,7 +706,8 @@ test('a stray unreadable file does not keep a gone session running', async ($, o
   await clock.advance(0)
   const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
   expect(await ui.findAll({ type: 'Text', text: /^\s*ended$/ })).toHaveLength(1)
-  expect(await ui.findAll({ type: 'Text', text: /^· 0 working$/ })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: /working$/ })).toHaveLength(0)
+  expect(await ui.findAll({ type: 'Text', text: /^· 1 ended$/ })).toHaveLength(1)
   await ui.unmount()
 })
 

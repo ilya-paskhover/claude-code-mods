@@ -7,6 +7,7 @@ import {
   cloudSessionId,
   foldRows,
   HISTORY_MS,
+  legend,
   look,
   mergeHistory,
   type Missing,
@@ -368,16 +369,14 @@ export const register: Register = on => {
     const problem = await read($, error)
     // Cloud sessions stay listed after they stop: recent ones, not running ones.
     const kind = (await read($, cloud)) ? 'recent' : 'running'
-    const working = all.filter(row => row.status === 'busy').length
-    const live = all.length - ended
     const days = Math.round(HISTORY_MS / 86_400_000)
 
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" gap={1}>
-          <Text color="claude" bold>{live} {kind}</Text>
-          <Text dimColor>· {working} working</Text>
-          {ended > 0 ? <Text dimColor>· {ended} ended</Text> : null}
+          {legend(all, at).map(({ dot, label, color, isDim, count }) => (
+            <Text key={`count:${label}`} color={color} dimColor={isDim}>{dot} {count} {label}</Text>
+          ))}
           <Button key="refresh" label="Refresh" onPress={() => refresh($)} />
           {ended > 0 ? (
             <Button

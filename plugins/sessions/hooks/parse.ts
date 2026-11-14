@@ -282,3 +282,18 @@ export const look = (row: SessionRow, now: number): Look => {
   if (row.status === 'failed') return { dot: '✗', label: 'failed', color: 'error', isDim: false }
   return { dot: '·', label: row.status, isDim: true }
 }
+
+// The pane header: one count per status, drawn with the same dot and color as
+// its rows, so each color means one thing. Ended goes last.
+export const legend = (rows: readonly SessionRow[], now: number): (Look & { count: number })[] => {
+  const order = ['busy', 'blocked', 'idle', 'failed']
+  const statuses = [...new Set(rows.map(row => row.status))].sort((a, b) => {
+    const rank = (s: string) => (s === 'ended' ? order.length + 1 : order.includes(s) ? order.indexOf(s) : order.length)
+    return rank(a) - rank(b)
+  })
+  return statuses.map(status => ({
+    // updatedAt now: a stale working row still counts as working.
+    ...look({ ...rows.find(row => row.status === status)!, updatedAt: now }, now),
+    count: rows.filter(row => row.status === status).length,
+  }))
+}

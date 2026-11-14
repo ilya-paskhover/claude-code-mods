@@ -109,7 +109,7 @@ Limits:
 
 `/sessions` opens a **Sessions** side pane listing every Claude Code session running on this machine, from any folder:
 
-- A count of running, working and ended sessions, and a Refresh button.
+- A count per status, drawn with the same dot and color as its rows (● working, ○ idle, · ended), and a Refresh button.
 - One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, and "this session" on your own row.
 - A **Switch** button on each session the desktop app started opens that session in the app. Sessions started in a terminal have no button.
 - Working sessions sort first, then the most recently active, ended ones last.
