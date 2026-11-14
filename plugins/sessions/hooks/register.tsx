@@ -309,7 +309,8 @@ async function autoOpen($: EngineInterface) {
   // Unfocused, so the prompt keeps the keyboard. Unasked, the engine draws a
   // pane only from 144 columns, or 110 once /sessions has opened it; narrower,
   // it waits for /sessions.
-  await $.ui.open({ id: PANE, title: PANE_TITLE })
+  const opened = await $.ui.open({ id: PANE, title: PANE_TITLE })
+  if (!opened.isPlaced) $.ui.log(`sessions: pane not drawn on auto-open: ${opened.reason}`, { to: 'debug' })
   await startTicking($)
 }
 
@@ -347,9 +348,11 @@ export const register: Register = on => {
     await openQuickly($)
     // Focused on open: unfocused, Switch took two clicks in the desktop app,
     // likely the first giving the pane focus.
-    await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })
+    const opened = await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })
     await startTicking($)
 
+    // Say when no surface draws it (#14), rather than claim it opened.
+    if (!opened.isPlaced) return { text: `Sessions pane is open but not drawn: ${opened.reason}` }
     return { text: 'Sessions pane opened.' }
   })
 

@@ -39,9 +39,11 @@ async function reload($: EngineInterface) {
   await update($, notes, () => list)
 }
 
-async function openPane($: EngineInterface) {
+// Resolves why no surface draws the pane, or undefined once it is drawn (#14).
+async function openPane($: EngineInterface): Promise<string | undefined> {
   await reload($)
-  await $.ui.open({ id: PANE, title: PANE_TITLE })
+  const opened = await $.ui.open({ id: PANE, title: PANE_TITLE })
+  return opened.isPlaced ? undefined : opened.reason
 }
 
 export const register: Register = on => {
@@ -61,9 +63,9 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'notes' }, async $ => {
-    await openPane($)
+    const notDrawn = await openPane($)
 
-    return { text: 'Notes pane opened.' }
+    return { text: notDrawn === undefined ? 'Notes pane opened.' : `Notes pane is open but not drawn: ${notDrawn}` }
   })
 
   on('command.run', { command: 'note' }, async ($, e) => {
@@ -89,10 +91,11 @@ export const register: Register = on => {
       done: false,
     }
     await change($, list => [note, ...list])
-    await openPane($)
+    const notDrawn = await openPane($)
 
     const firstLine = note.text.split('\n')[0] ?? ''
-    return { text: `Noted: ${firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine}` }
+    const noted = `Noted: ${firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine}`
+    return { text: notDrawn === undefined ? noted : `${noted}\nNotes pane is open but not drawn: ${notDrawn}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

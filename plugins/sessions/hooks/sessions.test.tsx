@@ -41,6 +41,8 @@ const file = (pid: number, fields: Record<string, unknown>) =>
 // A tree file starting with BIG is over $.fs.read's limit: only its tail can be read.
 // table: the process table's output, read when asked; THROW makes the read fail.
 const BIG = 'BIG\n'
+// What the mocked $.ui.open answers; a test that changes it puts it back.
+let placed: { isPlaced: true } | { isPlaced: false; reason: string } = { isPlaced: true }
 const setup = (
   on: On,
   files: Record<string, string>,
@@ -84,7 +86,7 @@ const setup = (
     const { id, focus } = e as { id: string; focus?: boolean }
     opens.push({ id, focus })
     panes.push({ id })
-    return { value: { isPlaced: true } } as never
+    return { value: placed } as never
   })
   on('ui.panes', () => ({ value: panes.map(p => ({ ...p, title: 'Sessions', isShown: true, isFocused: false })) }) as never)
   on('session.id', () => ({ value: 's-2' }) as never)
@@ -716,4 +718,18 @@ test('a cloud session that left the page goes once it is three days old', () => 
   const row = { id: 'c', cwd: '', name: 'c', status: 'idle', updatedAt: NOW - HISTORY_MS - 1, seenAt: NOW - 60_000 }
   const cloudMissing = (r: { updatedAt: number }): 'drop' | 'keep' => (NOW - r.updatedAt > HISTORY_MS ? 'drop' : 'keep')
   expect(mergeHistory({ c: row }, [], NOW, cloudMissing).rows).toEqual([])
+})
+
+test('/sessions says why when no surface draws the pane', async ($, on) => {
+  setup(on, { '2.json': file(2, {}) })
+  placed = { isPlaced: false, reason: 'the attached surfaces place no panes' }
+  try {
+    await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+    const ran = await $.command.run({ command: 'sessions', args: '' } as never)
+    expect((ran as { text: string }).text).toBe(
+      'Sessions pane is open but not drawn: the attached surfaces place no panes',
+    )
+  } finally {
+    placed = { isPlaced: true }
+  }
 })
