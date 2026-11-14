@@ -168,7 +168,7 @@ export const sessionAncestor = (pid: number, table: ReadonlyMap<number, number>,
 // top-level row.
 export const nestRows = (rows: readonly SessionRow[]) => {
   const ids = new Set(rows.map(row => row.id))
-  const hasParent = (row: SessionRow): row is SessionRow & { parent: string } => row.parent !== undefined && ids.has(row.parent)
+  const hasParent = (row: SessionRow): row is SessionRow & { parent: string } => typeof row.parent === 'string' && ids.has(row.parent)
   const children = new Map<string, SessionRow[]>()
   for (const row of rows) {
     if (hasParent(row)) children.set(row.parent, [...(children.get(row.parent) ?? []), row])
@@ -208,22 +208,37 @@ export const readHistory = (raw: unknown): History => {
   return kept
 }
 
-// found is every session listed now. A local session missing from it has
-// ended (its file goes when it exits). keepMissing: a missing session keeps its
-// last status, for a cloud page it has only dropped out of, or a listing with
-// an unreadable file. Sessions not seen for HISTORY_MS go.
-export const mergeHistory = (kept: History, found: readonly SessionRow[], at: number, keepMissing: boolean) => {
+// What becomes of a session in the history but missing from this listing:
+// 'ended' (a local session's file goes when it exits), 'keep' its last status
+// (its file was unreadable this time, or it only left a cloud page), or 'drop'.
+export type Missing = 'ended' | 'keep' | 'drop'
+
+// found is every session listed now. Sessions not seen for HISTORY_MS go.
+export const mergeHistory = (kept: History, found: readonly SessionRow[], at: number, missing: (row: SessionRow) => Missing) => {
   const history: History = {}
+  const listed = new Set(found.map(row => row.id))
   for (const [id, row] of Object.entries(kept)) {
-    if (at - row.seenAt > HISTORY_MS) continue
+    if (at - row.seenAt > HISTORY_MS || listed.has(id)) continue
+    if (row.status === 'ended') {
+      history[id] = row
+      continue
+    }
+    const fate = missing(row)
+    if (fate === 'drop') continue
     const { pid: _pid, ...rest } = row
-    history[id] = keepMissing || row.status === 'ended' ? row : { ...rest, status: 'ended', endedAt: at }
+    history[id] = fate === 'keep' ? row : { ...rest, status: 'ended', endedAt: at }
   }
   // A link or model learned earlier stays when this listing could not learn it
   // again: after a restart, a parent that has since exited is no process.
   for (const row of found) {
     const was = kept[row.id]
-    history[row.id] = { ...row, parent: row.parent ?? was?.parent, model: row.model ?? was?.model, seenAt: at }
+    // parent undefined: not looked up yet; null: looked up, none. The same
+    // process seen before keeps its stored link while no lookup finds one: it
+    // has outlived the session that started it. A new process under that id
+    // (a resumed session; ended rows keep no pid) goes by its own lookup.
+    const isSameProcess = was?.pid !== undefined && was.pid === row.pid
+    const parent = row.parent == null && isSameProcess ? (was.parent ?? row.parent) : row.parent
+    history[row.id] = { ...row, parent, model: row.model ?? was?.model, seenAt: at }
   }
   const rows = Object.values(history).map(({ seenAt: _seenAt, ...row }) => row as SessionRow)
   return { history, rows }

@@ -15,8 +15,9 @@ export type SessionRow = {
   // What a blocked cloud session is waiting on, as that session put it.
   needs?: string
   // The id of the session that spawned this one: from the desktop app's file
-  // for a session it started, otherwise from the process table.
-  parent?: string
+  // for a session it started, otherwise from the process table. null: looked
+  // up and found none; undefined: not known yet.
+  parent?: string | null
   // The model this session runs on, from the desktop app's file or its transcript.
   model?: string
   // When this session's file was found gone: it is history now, status 'ended'.

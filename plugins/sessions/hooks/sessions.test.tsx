@@ -618,15 +618,15 @@ test('a missing sessions folder is reported, not thrown', async ($, on) => {
 
 test('history marks a gone local session ended, keeps it three days, and keeps a cloud one as last seen', () => {
   const row = (pid: number) => parseSession(file(pid, {}))!
-  const first = mergeHistory({}, [row(1), row(2)], NOW, false)
-  const second = mergeHistory(readHistory(JSON.parse(JSON.stringify(first.history))), [row(2)], NOW + 60_000, false)
+  const first = mergeHistory({}, [row(1), row(2)], NOW, () => 'ended')
+  const second = mergeHistory(readHistory(JSON.parse(JSON.stringify(first.history))), [row(2)], NOW + 60_000, () => 'ended')
   expect(second.rows.find(r => r.id === 's-1')).toMatchObject({ status: 'ended', endedAt: NOW + 60_000 })
   expect(second.rows.find(r => r.id === 's-1')!.pid).toBeUndefined()
   expect(second.rows.find(r => r.id === 's-2')!.status).toBe('idle')
   // Seen at NOW, so still kept just under three days on, gone just over.
-  expect(mergeHistory(second.history, [], NOW + HISTORY_MS, false).rows.map(r => r.id).sort()).toEqual(['s-1', 's-2'])
-  expect(mergeHistory(second.history, [row(2)], NOW + HISTORY_MS + 1, false).rows.map(r => r.id)).toEqual(['s-2'])
-  expect(mergeHistory(first.history, [], NOW, true).rows.map(r => r.status)).toEqual(['idle', 'idle'])
+  expect(mergeHistory(second.history, [], NOW + HISTORY_MS, () => 'ended').rows.map(r => r.id).sort()).toEqual(['s-1', 's-2'])
+  expect(mergeHistory(second.history, [row(2)], NOW + HISTORY_MS + 1, () => 'ended').rows.map(r => r.id)).toEqual(['s-2'])
+  expect(mergeHistory(first.history, [], NOW, () => 'keep').rows.map(r => r.status)).toEqual(['idle', 'idle'])
   expect(readHistory({ x: { id: 'y', name: 'n' } })).toEqual({})
   expect(readHistory('junk')).toEqual({})
 })
@@ -676,4 +676,44 @@ test('an ended session stays listed after a restart, and the pane folds and hide
     await ui.press({ key: 'ended' })
     await ui.unmount()
   }
+})
+
+test('a stray unreadable file does not keep a gone session running', async ($, on) => {
+  const files: Record<string, string> = { '2.json': file(2, { name: 'Here' }), '9.json': '{' }
+  const { clock } = setup(on, files, {}, '', {}, {
+    history: { 's-1': { ...parseSession(file(1, { name: 'Gone', status: 'busy' }))!, seenAt: NOW - 60_000 } },
+  })
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  expect(await ui.findAll({ type: 'Text', text: /^\s*ended$/ })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: /^· 0 working$/ })).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('a session caught mid-write keeps its status, others missing still end', () => {
+  const row = (pid: number) => ({ ...parseSession(file(pid, { status: 'busy' }))!, seenAt: NOW })
+  const kept = { 's-1': row(1), 's-3': row(3) }
+  const { rows } = mergeHistory(kept, [], NOW, r => (r.pid === 3 ? 'keep' : 'ended'))
+  expect(Object.fromEntries(rows.map(r => [r.id, r.status]))).toEqual({ 's-1': 'ended', 's-3': 'busy' })
+})
+
+test('a confirmed no-parent replaces a parent kept in history', async ($, on) => {
+  const files: Record<string, string> = { '3.json': file(3, { name: 'Resumed' }), '2.json': file(2, { name: 'Other' }) }
+  const parent = { ...parseSession(file(1, { name: 'Old parent' }))!, pid: undefined, status: 'ended', seenAt: NOW }
+  const { clock } = setup(on, files, {}, '3 900\n2 900\n', {}, {
+    // Ended rows are stored without a pid: the resumed session is a new process.
+    history: { 's-1': parent, 's-3': { ...parseSession(files['3.json']!)!, pid: undefined, parent: 's-1', status: 'ended', seenAt: NOW } },
+  })
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
+  expect(await marks($)).toBe(0)
+})
+
+test('a cloud session that left the page goes once it is three days old', () => {
+  const row = { id: 'c', cwd: '', name: 'c', status: 'idle', updatedAt: NOW - HISTORY_MS - 1, seenAt: NOW - 60_000 }
+  const cloudMissing = (r: { updatedAt: number }): 'drop' | 'keep' => (NOW - r.updatedAt > HISTORY_MS ? 'drop' : 'keep')
+  expect(mergeHistory({ c: row }, [], NOW, cloudMissing).rows).toEqual([])
 })

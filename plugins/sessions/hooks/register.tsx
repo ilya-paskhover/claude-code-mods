@@ -9,6 +9,7 @@ import {
   HISTORY_MS,
   look,
   mergeHistory,
+  type Missing,
   nestRows,
   parseCloudSessions,
   parseDesktopSession,
@@ -64,9 +65,9 @@ const retryModel = new Map<string, number>()
 // What $.fs.read refuses: a long session's transcript passes it.
 const READ_LIMIT = 4 * 1024 * 1024
 
-// unsure: some session file couldn't be read, so a session missing from found
-// may still be running.
-type Listing = { found: SessionRow[]; problem: string; unsure?: boolean }
+// unreadable: the pids whose session file couldn't be read this time, so those
+// sessions may still be running though missing from found.
+type Listing = { found: SessionRow[]; problem: string; unreadable?: ReadonlySet<number> }
 
 async function sessionsDir($: EngineInterface) {
   const config = await $.env.get('CLAUDE_CONFIG_DIR')
@@ -124,7 +125,7 @@ async function linkParents($: EngineInterface, found: SessionRow[], unreadable: 
   }
   for (const id of retryParent.keys()) if (!found.some(row => row.id === id)) retryParent.delete(id)
   await update($, parents, () => linked)
-  return found.map(row => ({ ...row, parent: linked[row.id] ?? undefined }))
+  return found.map(row => ({ ...row, parent: linked[row.id] }))
 }
 
 // <app data>/Claude/claude-code-sessions/<org>/<user>/<host session id>.json,
@@ -194,7 +195,7 @@ async function localRows($: EngineInterface, full: boolean): Promise<Listing> {
   const dir = await sessionsDir($)
   const found: SessionRow[] = []
   let problem = ''
-  let unreadable = 0
+  const unreadable = new Set<number>()
   try {
     if (dir === undefined) throw new Error('no home folder')
     const files = (await $.fs.list(dir)).filter(f => f.kind === 'file' && f.name.endsWith('.json'))
@@ -204,7 +205,7 @@ async function localRows($: EngineInterface, full: boolean): Promise<Listing> {
         .then(parseSession)
         .catch(() => undefined)
       if (row !== undefined) found.push(row)
-      else unreadable++
+      else unreadable.add(Number(file.name.slice(0, -'.json'.length)))
     }
     if (files.length > 0 && found.length === 0) {
       problem = "Couldn't read any session file: Claude Code may have changed their format."
@@ -214,10 +215,10 @@ async function localRows($: EngineInterface, full: boolean): Promise<Listing> {
   }
   if (!full) {
     const [linked, named] = [await read($, parents), await read($, models)]
-    return { found: found.map(row => ({ ...row, parent: linked[row.id] ?? undefined, model: named[row.id] })), problem, unsure: unreadable > 0 }
+    return { found: found.map(row => ({ ...row, parent: linked[row.id], model: named[row.id] })), problem, unreadable }
   }
-  const linked = await linkParents($, found, unreadable)
-  return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem, unsure: unreadable > 0 }
+  const linked = await linkParents($, found, unreadable.size)
+  return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem, unreadable }
 }
 
 async function cloudRows($: EngineInterface): Promise<Listing> {
@@ -239,9 +240,9 @@ async function cloudRows($: EngineInterface): Promise<Listing> {
 // what any of them wrote last. shortcut: two refreshes racing can drop a row
 // one of them added; the next refresh puts a running session back, an ended
 // one is lost.
-async function withHistory($: EngineInterface, found: SessionRow[], at: number, keepMissing: boolean) {
+async function withHistory($: EngineInterface, found: SessionRow[], at: number, missing: (row: SessionRow) => Missing) {
   const kept = readHistory(await $.store.get(HISTORY_KEY).catch(() => undefined))
-  const { history, rows: merged } = mergeHistory(kept, found, at, keepMissing)
+  const { history, rows: merged } = mergeHistory(kept, found, at, missing)
   await $.store.set(HISTORY_KEY, history).catch((err: unknown) => $.ui.log(`sessions: history not saved: ${String(err)}`, { to: 'debug' }))
   return merged
 }
@@ -249,9 +250,13 @@ async function withHistory($: EngineInterface, found: SessionRow[], at: number, 
 async function refresh($: EngineInterface, full = true) {
   const at = await $.clock.now()
   const isCloud = await read($, cloud)
-  const { found, problem, unsure = false } = isCloud ? await cloudRows($) : await localRows($, full)
+  const { found, problem, unreadable } = isCloud ? await cloudRows($) : await localRows($, full)
+  // A cloud session off the page is kept until it is HISTORY_MS old, like the
+  // page itself; a local one ended unless its own file was the unreadable one.
+  const missing = (row: SessionRow): Missing =>
+    isCloud ? (at - row.updatedAt > HISTORY_MS ? 'drop' : 'keep') : row.pid !== undefined && unreadable?.has(row.pid) ? 'keep' : 'ended'
   // A listing that failed outright says nothing about which sessions ended.
-  const listed = problem !== '' && found.length === 0 ? found : await withHistory($, found, at, isCloud || unsure)
+  const listed = problem !== '' && found.length === 0 ? found : await withHistory($, found, at, missing)
   await update($, rows, () => sortRows(listed))
   await update($, error, () => problem)
   await update($, now, () => at)
