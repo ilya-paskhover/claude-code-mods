@@ -6,6 +6,8 @@ import { clean, compose, preview } from './compose'
 const SURFACES = ['terminal', 'desktop'] as const
 const PANE = { component: 'Pane', requestId: 'notes', props: {} as never } as const
 
+// What the mocked $.ui.open answers; a test that changes it puts it back.
+let placed: { isPlaced: true } | { isPlaced: false; reason: string } = { isPlaced: true }
 const setup = (on: On) => {
   mock.clock(on, { now: Date.UTC(2026, 9, 9, 12, 0) })
   const store = new Map<string, unknown>()
@@ -17,7 +19,7 @@ const setup = (on: On) => {
   })
   on('session.cwd', () => ({ value: 'C:\\work\\project' }) as never)
   on('session.id', () => ({ value: 'session-1' }) as never)
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('ui.open', () => ({ value: placed }) as never)
   on('command.register', () => ({ value: undefined }) as never)
   on('session.start', ($, e) => ({ cwd: (e as { cwd: string }).cwd }) as never)
   return { store }
@@ -121,5 +123,21 @@ test('a long note draws as markdown with More and Less', async ($, on) => {
     expect(await ui.findAll({ type: 'Button', text: /^Less$/ })).toHaveLength(1)
     await ui.press({ key: (more as { key: string }).key })
     await ui.unmount()
+  }
+})
+
+test('/notes and /note say why when no surface draws the pane', async ($, on) => {
+  setup(on)
+  placed = { isPlaced: false, reason: 'the attached surfaces place no panes' }
+  try {
+    await $.session.start({ source: 'startup', cwd: 'C:/work/project' } as never)
+    const opened = await $.command.run({ command: 'notes', args: '' } as never)
+    expect((opened as { text: string }).text).toBe('Notes pane is open but not drawn: the attached surfaces place no panes')
+    const noted = await $.command.run({ command: 'note', args: 'kept' } as never)
+    expect((noted as { text: string }).text).toBe(
+      'Noted: kept\nNotes pane is open but not drawn: the attached surfaces place no panes',
+    )
+  } finally {
+    placed = { isPlaced: true }
   }
 })
