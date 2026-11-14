@@ -1,7 +1,7 @@
 ---
 name: check-mod
-description: Check the mods a branch changes in this repo, from a cloud session. Runs `claude plugin validate`, `claude plugin test` and a type check on each changed plugin under plugins/, tells a failure the branch caused from one already on main, then writes a prompt the user pastes into Claude Code on their own computer to do the live check there and run a code review in a subagent. Use when asked to check, test or verify a mod change, a branch or a PR here, or "test it locally".
-argument-hint: "[base-ref, default origin/main]"
+description: Check the mods a branch or PR changes in this repo, from a cloud session; a PR or branch other than the checked-out one is checked in a separate worktree. Runs `claude plugin validate`, `claude plugin test` and a type check on each changed plugin under plugins/, tells a failure the branch caused from one already on main, then writes a prompt the user pastes into Claude Code on their own computer to do the live check there and run a code review in a subagent. Use when asked to check, test or verify a mod change, a branch or a PR here, or "test it locally".
+argument-hint: "[PR number or branch, default the checked-out branch] [--base <ref>, default origin/main]"
 ---
 
 # Check a mod change
@@ -13,13 +13,31 @@ A cloud session can run the automated checks, but it can't do the live check: mo
 
 Never report a mod as working from the automated checks alone. Say that the live check is still to do.
 
-## 1. Find what changed
+## 1. Pick what to check
 
-- The base is `$ARGUMENTS` if given, else `origin/main`. Run `git fetch origin main` first when using the default.
+`$ARGUMENTS` can name what to check and what to compare it with:
+
+- **Nothing**: the checked-out branch, uncommitted changes included. Check it where it is and skip the rest of this step.
+- **A PR number** (`22` or `#22`): read the PR (GitHub MCP `pull_request_read`, method `get`) for its head branch and head commit. If the PR is merged or closed, say so and ask before going on. A PR from a fork can't be fetched from `origin`: say so and stop.
+- **A branch name**: that branch on `origin`.
+- **`--base <ref>`**, with or without the above: what to compare with. The default is `origin/main`.
+
+For a PR or branch, never switch the current checkout, which may hold someone's work. Check it in a separate worktree instead:
+
+```
+git fetch origin main <branch>
+git worktree add --detach <scratchpad>/check-<branch with / as -> origin/<branch>
+```
+
+Run every later command of steps 2 and 3 from inside that worktree, and give `check.sh` by its path in the current checkout (the branch being checked may not have this skill yet). If the PR's head commit isn't the worktree's `HEAD`, the branch moved since the PR was read: say which commit you checked. When the report is done, remove the worktree with `git worktree remove --force <path>`.
+
+## 2. Find what changed
+
+- Run `git fetch origin main` first when the base is the default.
 - Run `git diff --stat <base>...HEAD` and `git status --short`, and read the diff of each changed mod (`plugins/<mod>/`), so you can write live steps for what changed.
 - If no mod under `plugins/` changed, say so and stop. Changes to README, `.github/` or this skill need no mod check.
 
-## 2. Get the type file
+## 3. Get the type file
 
 The engine writes a mod's types to `plugins/<mod>/.claude-plugin/types/` only when it loads the mod, so a fresh checkout has none.
 
@@ -27,10 +45,10 @@ The engine writes a mod's types to `plugins/<mod>/.claude-plugin/types/` only wh
 - Otherwise load the built-in `plugin-authoring` skill (Skill tool). Its text names this build's API type file, a path ending in `plugin-authoring/types/claude-code.d.ts`. Use that path as the types file.
 - If that skill isn't available, run the checks without a types file. The type check then shows as skipped; report it as skipped, never as passed.
 
-## 3. Run the checks
+## 4. Run the checks
 
 ```
-bash .claude/skills/check-mod/check.sh <base> <types file>
+bash <this checkout>/.claude/skills/check-mod/check.sh <base> <types file>
 ```
 
 For each changed mod it runs `validate`, `test` and `tsc`, and prints `<mod> <check> pass|fail|skipped (note)`. A failed check is run again on the base commit:
@@ -42,7 +60,7 @@ The script exits 1 only for failures the branch caused. A `validate` warning abo
 
 If a changed mod has a test file but the diff added no test for new behaviour, say so.
 
-## 4. Write the live-check prompt
+## 5. Write the live-check prompt
 
 Write a prompt the user pastes into Claude Code on their own computer. Save it in the scratchpad directory as `check-<branch>.md` (the branch name with `/` replaced by `-`), send it with SendUserFile, and also show it in the reply.
 
@@ -58,9 +76,10 @@ The prompt must stand alone: the session that reads it has none of this conversa
 
 If the user would rather do the live check in a cloud session, mention the README's setup-script snippet (it installs a branch's copy of a mod into a new cloud session). Add that panes won't show there (#14), so only commands and the status line can be checked that way.
 
-## 5. Report
+## 6. Report
 
 - One line per mod and check, as the script printed, with the cause of each failure the branch caused.
 - What was skipped and why.
+- What was checked: the branch and commit (and PR number), or "the checked-out branch".
 - The path of the live-check prompt.
 - Last: whether the change is ready for its live check, or what has to be fixed first.
