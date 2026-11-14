@@ -178,6 +178,8 @@ claude plugin marketplace add $M && claude plugin install $MOD@mod-branch
 
 In the session, `claude plugin list` should then show `<mod>@mod-branch` enabled.
 
+From a Claude Code session in this repo, `/check-mod` checks every mod a branch changes: `claude plugin validate`, `claude plugin test` and a type check, with failures already on `main` marked as such, plus a code review by a background subagent (the reviewers below) whose findings are checked against the code; `--second-review` runs both reviewers. Then the live check, which a cloud session can't do since mod panes don't show there: in a cloud session it writes a prompt to paste into Claude Code on your own computer; run on your computer, it does the live check itself, starting sessions and reading state for each step and asking you what the pane shows. `/check-mod 22` checks a PR, `/check-mod <branch>` a branch, each in a separate worktree; `--live-only` skips straight to the live check when a cloud run already did the rest on the same commit. There is nothing to install: the skill lives in the repo (`.claude/skills/check-mod/`), so any session with a checkout that includes it has it, including every new cloud session once it is on `main`.
+
 Each mod's `tsconfig.json` extends the type declarations the engine writes into `.claude-plugin/types/` when it loads the mod (gitignored), so `tsc -p plugins/notes` works once the mod has loaded once.
 
 ### Releases
@@ -186,7 +188,16 @@ Bump `version` in a mod's `.claude-plugin/plugin.json` and merge to `main`: a wo
 
 ### Reviewing a PR
 
-`.claude/settings.json` enables two review plugins for every session in this repo, cloud sessions included, so Claude Code asks once to trust their marketplaces: Addy Osmani's [`agent-skills`](https://github.com/addyosmani/agent-skills) and Anthropic's [`pr-review-toolkit`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/pr-review-toolkit).
+`.claude/settings.json` enables two review plugins for every session in this repo, so Claude Code asks once to trust their marketplaces: Addy Osmani's [`agent-skills`](https://github.com/addyosmani/agent-skills) and Anthropic's [`pr-review-toolkit`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/pr-review-toolkit).
+
+In a cloud session only `pr-review-toolkit` loads by itself; `agent-skills` is not installed there. Optionally, install it with:
+
+```
+claude plugin marketplace add addyosmani/agent-skills
+claude plugin install agent-skills@addy-agent-skills
+```
+
+It loads from the next session on. A cloud container starts fresh each session, so to have it in every cloud session, put those two lines in the environment's setup script. It adds about 4,000 tokens to every session for its 34 skills, used or not.
 
 1. Run `/agent-skills:code-review-and-quality` first: one agent, one report, few false alarms.
 2. For a risky PR, add `/pr-review-toolkit:review-pr errors tests`, which finds what the first one misses about error handling and tests. Add `comments` or `types` when those changed; `all` runs every agent.

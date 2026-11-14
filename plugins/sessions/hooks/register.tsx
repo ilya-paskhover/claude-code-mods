@@ -174,7 +174,7 @@ async function addDetails($: EngineInterface, found: SessionRow[], dir: string) 
       desktop = await $.fs.read(`${folder}/${row.hostSessionId}.json`).then(parseDesktopSession).catch(() => undefined)
       if (desktop !== undefined) break
     }
-    let model = desktop?.model ?? known[row.id]
+    let model: string | undefined = desktop?.model ?? known[row.id]
     if (model === undefined && (retryModel.get(row.id) ?? 0) <= at) {
       const text = await readTranscript($, `${dir.replace(/sessions$/, 'projects')}/${projectFolder(row.cwd)}`, `${row.id}.jsonl`)
       model = text === undefined ? undefined : transcriptModel(text)
