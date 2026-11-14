@@ -93,7 +93,8 @@ export const cloudSessionId = (remoteId: string) => `session_${remoteId.replace(
 export const switchLink = (row: SessionRow) =>
   row.hostSessionId === undefined ? undefined : `claude://claude.ai/epitaxy/${encodeURIComponent(row.hostSessionId)}`
 
-// Working sessions first, then the most recently active; one row per session.
+// Working sessions first, then the most recently active, ended ones last; one
+// row per session.
 export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
   const newest = new Map<string, SessionRow>()
   for (const row of rows) {
@@ -101,6 +102,8 @@ export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
     if (seen === undefined || row.updatedAt > seen.updatedAt) newest.set(row.id, row)
   }
   return [...newest.values()].sort((a, b) => {
+    const ended = Number(a.status === 'ended') - Number(b.status === 'ended')
+    if (ended !== 0) return ended
     const busy = Number(b.status === 'busy') - Number(a.status === 'busy')
     return busy !== 0 ? busy : b.updatedAt - a.updatedAt
   })
@@ -165,7 +168,7 @@ export const sessionAncestor = (pid: number, table: ReadonlyMap<number, number>,
 // top-level row.
 export const nestRows = (rows: readonly SessionRow[]) => {
   const ids = new Set(rows.map(row => row.id))
-  const hasParent = (row: SessionRow): row is SessionRow & { parent: string } => row.parent !== undefined && ids.has(row.parent)
+  const hasParent = (row: SessionRow): row is SessionRow & { parent: string } => typeof row.parent === 'string' && ids.has(row.parent)
   const children = new Map<string, SessionRow[]>()
   for (const row of rows) {
     if (hasParent(row)) children.set(row.parent, [...(children.get(row.parent) ?? []), row])
@@ -185,6 +188,79 @@ export const nestRows = (rows: readonly SessionRow[]) => {
   return nested
 }
 
+// How long a session stays listed after it was last seen.
+export const HISTORY_MS = 3 * 24 * 60 * 60_000
+
+// What the store keeps between sessions: every session seen in the last
+// HISTORY_MS, as last seen.
+export type History = Record<string, SessionRow & { seenAt: number }>
+
+// The store's value, not trusted to be the shape this version wrote.
+export const readHistory = (raw: unknown): History => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const kept: History = {}
+  for (const [id, row] of Object.entries(raw as Record<string, unknown>)) {
+    const o = row as Partial<SessionRow & { seenAt: number }> | null
+    if (typeof o !== 'object' || o === null || o.id !== id || typeof o.name !== 'string') continue
+    if (typeof o.seenAt !== 'number' || typeof o.updatedAt !== 'number' || typeof o.status !== 'string') continue
+    kept[id] = { ...(o as SessionRow & { seenAt: number }), cwd: typeof o.cwd === 'string' ? o.cwd : '' }
+  }
+  return kept
+}
+
+// What becomes of a session in the history but missing from this listing:
+// 'ended' (a local session's file goes when it exits), 'keep' its last status
+// (its file was unreadable this time, or it only left a cloud page), or 'drop'.
+export type Missing = 'ended' | 'keep' | 'drop'
+
+// found is every session listed now. Sessions not seen for HISTORY_MS go.
+export const mergeHistory = (kept: History, found: readonly SessionRow[], at: number, missing: (row: SessionRow) => Missing) => {
+  const history: History = {}
+  const listed = new Set(found.map(row => row.id))
+  for (const [id, row] of Object.entries(kept)) {
+    if (at - row.seenAt > HISTORY_MS || listed.has(id)) continue
+    if (row.status === 'ended') {
+      history[id] = row
+      continue
+    }
+    const fate = missing(row)
+    if (fate === 'drop') continue
+    const { pid: _pid, ...rest } = row
+    history[id] = fate === 'keep' ? row : { ...rest, status: 'ended', endedAt: at }
+  }
+  // A link or model learned earlier stays when this listing could not learn it
+  // again: after a restart, a parent that has since exited is no process.
+  for (const row of found) {
+    const was = kept[row.id]
+    // parent undefined: not looked up yet; null: looked up, none. The same
+    // process seen before keeps its stored link while no lookup finds one: it
+    // has outlived the session that started it. A new process under that id
+    // (a resumed session; ended rows keep no pid) goes by its own lookup.
+    const isSameProcess = was?.pid !== undefined && was.pid === row.pid
+    const parent = row.parent == null && isSameProcess ? (was.parent ?? row.parent) : row.parent
+    history[row.id] = { ...row, parent, model: row.model ?? was?.model, seenAt: at }
+  }
+  const rows = Object.values(history).map(({ seenAt: _seenAt, ...row }) => row as SessionRow)
+  return { history, rows }
+}
+
+// nestRows' order with each row's count of sessions under it, leaving out the
+// rows under a folded one.
+export const foldRows = (nested: readonly { row: SessionRow; depth: number }[], folded: Readonly<Record<string, boolean>>) => {
+  const shown: { row: SessionRow; depth: number; under: number; isFolded: boolean }[] = []
+  let hideBelow: number | undefined
+  nested.forEach(({ row, depth }, i) => {
+    if (hideBelow !== undefined && depth > hideBelow) return
+    hideBelow = undefined
+    let under = 0
+    while (i + under + 1 < nested.length && nested[i + under + 1]!.depth > depth) under++
+    const isFolded = under > 0 && folded[row.id] === true
+    if (isFolded) hideBelow = depth
+    shown.push({ row, depth, under, isFolded })
+  })
+  return shown
+}
+
 export const ago = (ms: number) => {
   const minutes = Math.floor(Math.max(0, ms) / 60_000)
   if (minutes < 1) return 'now'
@@ -202,6 +278,22 @@ export const look = (row: SessionRow, now: number): Look => {
   }
   if (row.status === 'idle') return { dot: '○', label: 'idle', color: 'success', isDim: false }
   if (row.status === 'blocked') return { dot: '◐', label: 'needs input', color: 'warning', isDim: false }
+  if (row.status === 'ended') return { dot: '·', label: 'ended', isDim: true }
   if (row.status === 'failed') return { dot: '✗', label: 'failed', color: 'error', isDim: false }
   return { dot: '·', label: row.status, isDim: true }
+}
+
+// The pane header: one count per status, drawn with the same dot and color as
+// its rows, so each color means one thing. Ended goes last.
+export const legend = (rows: readonly SessionRow[], now: number): (Look & { count: number })[] => {
+  const order = ['busy', 'blocked', 'idle', 'failed']
+  const statuses = [...new Set(rows.map(row => row.status))].sort((a, b) => {
+    const rank = (s: string) => (s === 'ended' ? order.length + 1 : order.includes(s) ? order.indexOf(s) : order.length)
+    return rank(a) - rank(b)
+  })
+  return statuses.map(status => ({
+    // updatedAt now: a stale working row still counts as working.
+    ...look({ ...rows.find(row => row.status === status)!, updatedAt: now }, now),
+    count: rows.filter(row => row.status === status).length,
+  }))
 }

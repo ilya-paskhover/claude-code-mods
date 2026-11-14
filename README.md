@@ -109,16 +109,18 @@ Limits:
 
 `/sessions` opens a **Sessions** side pane listing every Claude Code session running on this machine, from any folder:
 
-- A count of running and working sessions, and a Refresh button.
+- A count per status, drawn with the same dot and color as its rows (● working, ○ idle, · ended), and a Refresh button.
 - One row per session: ● **working** (yellow) or ○ **idle** (green), the session's name, how long since its last activity, and "this session" on your own row.
 - A **Switch** button on each session the desktop app started opens that session in the app. Sessions started in a terminal have no button.
-- Working sessions sort first, then the most recently active.
-- A session spawned by another one, such as a `claude -p` run started from a Bash call or a session started from another in the desktop app, shows indented under its parent (local sessions only).
+- Working sessions sort first, then the most recently active, ended ones last.
+- **History**: a session that has exited stays listed, dimmed as · **ended**, for 3 days after it was last seen. The history is kept in the mod's own store, shared by every session on this machine, so it survives restarts. **Hide ended** / **Show ended** toggles those rows.
+- **Folding**: a session with sessions under it has a **▾ N** button, N being how many sessions sit under it at any depth. Press it to fold them away (it then reads **▸ N**); press again to unfold. Folds last for the session.
+- A session spawned by another one, such as a `claude -p` run started from a Bash call or a session started from another in the desktop app, shows indented under its parent (local sessions only), even after the parent has ended.
 - Each local session's row names the model it runs on, once its desktop file or transcript says.
 - The pane refreshes every 5 seconds while it is open and stops when you close it.
 - The pane opens by itself once per local session: at start in a terminal, or when the desktop app connects. It opens unfocused, so the prompt keeps the keyboard. Close it and it stays closed for that session, through reloads and desktop reconnects.
 
-In a cloud session, where the container holds only that one session, `/sessions` lists your 10 most recent cloud sessions instead, from the `claude-code-remote` MCP server every cloud session has:
+In a cloud session, where the container holds only that one session, `/sessions` lists your cloud sessions active in the last 3 days (up to 50) instead, from the `claude-code-remote` MCP server every cloud session has:
 
 - ● **working**, ◐ **needs input** with what the session is waiting on, ✗ **failed**, or ○ **idle** (finished or ready for review).
 - An **Open** link on each other session goes to its page on claude.ai.
@@ -128,9 +130,10 @@ Limits:
 
 - Opened by itself, the pane shows only in a window at least 144 columns wide, or 110 once you have opened it with `/sessions`. In a narrower one it waits until you run `/sessions`. Cloud sessions don't open it by themselves, since each refresh there is an API call; `/sessions` opens it.
 - The list comes from Claude Code's own files in `~/.claude/sessions/` (or `$CLAUDE_CONFIG_DIR/sessions/`), not from the mod API. That format is undocumented and could change in any release; if no file can be read, the pane says so instead of showing a wrong list.
-- Locally, only sessions running on this machine appear: closed sessions and cloud sessions do not. In a cloud session, only cloud sessions appear, not the ones on your computer.
+- Locally, only sessions on this machine appear: those running now, and those ended in the last 3 days while some session here had the mod loaded (a session that started and ended with no other session watching is not in the history). Cloud sessions do not appear.
+- Two sessions refreshing at the same moment can each overwrite the other's history write; a running session reappears on the next refresh, but an ended one caught that way is lost. In a cloud session, only cloud sessions appear, not the ones on your computer.
 - The cloud list is the `claude-code-remote` server's `list_sessions` output, which is not a documented format either; if it can't be read, the pane says so. In a live cloud session the plugin loads and `/sessions` runs, but the pane does not appear; tracked in [#14](https://github.com/ilya-paskhover/claude-code-mods/issues/14). When no surface draws the pane, `/sessions` says why instead of claiming it opened.
-- Nesting comes from the process table, since session files don't name a parent, and from the desktop app's own session files for sessions it started. Those files, like the transcripts the model name comes from for other sessions, are not mod API and could change in any release; the pane then shows no model or a flatter list. A model read from a transcript is kept for that session's life, so a later `/model` doesn't show. The pane opens before those are read, so a new session's parent and model can appear a moment later. A child whose parent has exited goes back to top-level. If the process table can't be read, the list stays flat and the pane tries again after 5 seconds, then less often, down to once a minute.
+- Nesting comes from the process table, since session files don't name a parent, and from the desktop app's own session files for sessions it started. Those files, like the transcripts the model name comes from for other sessions, are not mod API and could change in any release; the pane then shows no model or a flatter list. A model read from a transcript is kept for that session's life, so a later `/model` doesn't show. The pane opens before those are read, so a new session's parent and model can appear a moment later. A child whose parent has exited stays under it while the parent is in the history; a new session that reuses the parent's process id does not adopt it. If the process table can't be read, the list stays flat and the pane tries again after 5 seconds, then less often, down to once a minute.
 - Switch works only for sessions the desktop app started, through an undocumented `claude://` link, not a mod API (tracked in [#4](https://github.com/ilya-paskhover/claude-code-mods/issues/4)).
 - In the desktop app, a click on the pane first gives it focus, so a button may need two clicks: one to focus the pane, one to press. The pane opens focused, so the first click right after `/sessions` works; after you click elsewhere, click anywhere in the pane (or Refresh) first. Press Esc to give the keyboard back to the prompt.
 - Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
