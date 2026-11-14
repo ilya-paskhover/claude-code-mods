@@ -103,7 +103,7 @@ Limits:
 ## sessions
 
 <table><tr>
-<td valign="top"><img src="docs/sessions.png" width="311" alt="sessions: the Sessions side pane with two running sessions and a Switch button"></td>
+<td valign="top"><img src="docs/sessions.png" width="400" alt="sessions: the Sessions side pane, its header counting 1 working, 2 idle and 6 ended sessions, with a Switch button and two ended sessions under their parent"></td>
 <td valign="top"><img src="docs/sessions-nesting.png" width="347" alt="sessions: a session with two spawned children indented under it, each row naming its model"></td>
 </tr></table>
 
