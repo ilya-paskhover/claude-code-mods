@@ -174,7 +174,7 @@ claude plugin marketplace add $M && claude plugin install $MOD@mod-branch
 
 In the session, `claude plugin list` should then show `<mod>@mod-branch` enabled.
 
-From a Claude Code session in this repo, `/check-mod` runs those checks on every mod the branch changes, marks failures that are already on `main`, and writes a prompt to paste into Claude Code on your own computer for the live check and a code review. It's meant for cloud sessions, where mod panes don't show.
+From a Claude Code session in this repo, `/check-mod` runs those checks on every mod the branch changes, marks failures that are already on `main`, and writes a prompt to paste into Claude Code on your own computer for the live check and a code review. It's meant for cloud sessions, where mod panes don't show. There is nothing to install: the skill lives in the repo (`.claude/skills/check-mod/`), so any session with a checkout that includes it has it, including every new cloud session once it is on `main`.
 
 Each mod's `tsconfig.json` extends the type declarations the engine writes into `.claude-plugin/types/` when it loads the mod (gitignored), so `tsc -p plugins/notes` works once the mod has loaded once.
 
