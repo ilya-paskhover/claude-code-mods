@@ -4,13 +4,17 @@ import type { On } from 'claude-code'
 import {
   ago,
   cloudSessionId,
+  foldRows,
+  HISTORY_MS,
   look,
+  mergeHistory,
   nestRows,
   parseCloudSessions,
   parseDesktopSession,
   parseProcessTable,
   parseSession,
   projectFolder,
+  readHistory,
   sessionAncestor,
   sortRows,
   STALE_MS,
@@ -43,8 +47,10 @@ const setup = (
   env: Record<string, string> = {},
   table: string | (() => string) = '',
   tree: Record<string, string> = {},
+  store: Record<string, unknown> = {},
 ) => {
   const clock = mock.clock(on, { now: NOW })
+  mock.store(on, store)
   mock.env(on, { USERPROFILE: 'C:\\Users\\dev', ...env })
   const panes: { id: string }[] = []
   const opens: { id: string; focus?: boolean }[] = []
@@ -326,7 +332,7 @@ test('a parent file caught mid-write does not unlink its child for good', async 
   expect(await marks($)).toBe(1)
 })
 
-test('a child whose parent exited stays top-level when a new session takes the parent pid', async ($, on) => {
+test('a child whose parent exited stays under the ended parent, not a new session on the parent pid', async ($, on) => {
   const files: Record<string, string> = { '1.json': file(1, { name: 'Parent' }), '5.json': file(5, { name: 'Child' }), '3.json': file(3, { name: 'Other' }) }
   let table = '1 900\n5 1\n3 900\n'
   const { clock } = setup(on, files, {}, () => table)
@@ -340,7 +346,12 @@ test('a child whose parent exited stays top-level when a new session takes the p
   files['1.json'] = JSON.stringify({ pid: 1, sessionId: 's-new', cwd: 'C:\\work\\q', status: 'idle', updatedAt: NOW, name: 'Q' })
   table = '1 901\n5 900\n3 900\n'
   await clock.advance(5_000)
-  expect(await marks($)).toBe(0)
+  const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
+  const names = await ui.findAll({ type: 'Text', text: /^(Parent|Child|Other|Q)$/ })
+  expect(names.map(n => (n as { text: string }).text)).toEqual(['Other', 'Q', 'Parent', 'Child'])
+  expect(await ui.findAll({ type: 'Text', text: /^└$/ })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: /^\s*ended$/ })).toHaveLength(1)
+  await ui.unmount()
 })
 
 test('on Windows the table comes from PowerShell', async ($, on) => {
@@ -537,7 +548,7 @@ test('a cloud session lists recent cloud sessions with an Open link and what eac
   ])
   await $.session.start({ source: 'startup', cwd: '/w' } as never)
   await $.command.run({ command: 'sessions', args: '' } as never)
-  expect(calls).toEqual([{ server: 'claude-code-remote', tool: 'list_sessions', args: { mine: true, limit: 10 } }])
+  expect(calls).toEqual([{ server: 'claude-code-remote', tool: 'list_sessions', args: { mine: true, limit: 50 } }])
   expect(lists()).toBe(0)
 
   for (const surface of [...SURFACES, 'mobile'] as const) {
@@ -603,4 +614,66 @@ test('a missing sessions folder is reported, not thrown', async ($, on) => {
   const ui = await $.ui.mount({ plugin: 'sessions', surface: 'terminal', ...PANE })
   expect(await ui.findAll({ type: 'Text', text: /No session folder found at \/home\/dev\/.claude\/sessions/ })).toHaveLength(1)
   await ui.unmount()
+})
+
+test('history marks a gone local session ended, keeps it three days, and keeps a cloud one as last seen', () => {
+  const row = (pid: number) => parseSession(file(pid, {}))!
+  const first = mergeHistory({}, [row(1), row(2)], NOW, false)
+  const second = mergeHistory(readHistory(JSON.parse(JSON.stringify(first.history))), [row(2)], NOW + 60_000, false)
+  expect(second.rows.find(r => r.id === 's-1')).toMatchObject({ status: 'ended', endedAt: NOW + 60_000 })
+  expect(second.rows.find(r => r.id === 's-1')!.pid).toBeUndefined()
+  expect(second.rows.find(r => r.id === 's-2')!.status).toBe('idle')
+  // Seen at NOW, so still kept just under three days on, gone just over.
+  expect(mergeHistory(second.history, [], NOW + HISTORY_MS, false).rows.map(r => r.id).sort()).toEqual(['s-1', 's-2'])
+  expect(mergeHistory(second.history, [row(2)], NOW + HISTORY_MS + 1, false).rows.map(r => r.id)).toEqual(['s-2'])
+  expect(mergeHistory(first.history, [], NOW, true).rows.map(r => r.status)).toEqual(['idle', 'idle'])
+  expect(readHistory({ x: { id: 'y', name: 'n' } })).toEqual({})
+  expect(readHistory('junk')).toEqual({})
+})
+
+test('folding hides the sessions under a row and counts them', () => {
+  const row = (pid: number, parent?: number) => ({ ...parseSession(file(pid, {}))!, parent: parent === undefined ? undefined : `s-${parent}` })
+  const nested = nestRows([row(1), row(2, 1), row(3, 2), row(4, 1), row(5)])
+  const shape = (folded: Record<string, boolean>) => foldRows(nested, folded).map(n => [n.row.pid, n.under, n.isFolded])
+  expect(shape({})).toEqual([[1, 3, false], [2, 1, false], [3, 0, false], [4, 0, false], [5, 0, false]])
+  expect(shape({ 's-2': true })).toEqual([[1, 3, false], [2, 1, true], [4, 0, false], [5, 0, false]])
+  expect(shape({ 's-1': true, 's-2': true })).toEqual([[1, 3, true], [5, 0, false]])
+  expect(shape({ 's-5': true })).toEqual(shape({}))
+})
+
+test('an ended session stays listed after a restart, and the pane folds and hides', async ($, on) => {
+  const parent = { ...parseSession(file(1, { name: 'Parent', updatedAt: NOW - 3_600_000 }))!, pid: undefined, status: 'ended', seenAt: NOW - 3_600_000 }
+  const files: Record<string, string> = {
+    '5.json': file(5, { name: 'Child' }),
+    '6.json': file(6, { name: 'Grandchild' }),
+  }
+  const { clock } = setup(on, files, {}, '5 900\n6 5\n', {}, {
+    history: { 's-1': parent, 's-5': { ...parseSession(files['5.json']!)!, parent: 's-1', seenAt: NOW } },
+  })
+  await $.session.start({ source: 'startup', cwd: 'C:/work/p2' } as never)
+  await $.command.run({ command: 'sessions', args: '' } as never)
+  await clock.advance(0)
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'sessions', surface, ...PANE })
+    const names = async () => (await ui.findAll({ type: 'Text', text: /^(Parent|Child|Grandchild)$/ })).map(n => (n as { text: string }).text)
+    expect(await names()).toEqual(['Parent', 'Child', 'Grandchild'])
+    expect(await ui.findAll({ type: 'Text', text: /^2 running$/ })).toHaveLength(1)
+    expect(await ui.findAll({ type: 'Text', text: /^· 1 ended$/ })).toHaveLength(1)
+
+    await ui.press({ key: 'fold:s-5' })
+    expect(await names()).toEqual(['Parent', 'Child'])
+    expect(await ui.find({ key: 'fold:s-5' })).toMatchObject({ text: '▸ 1' })
+    await ui.press({ key: 'fold:s-1' })
+    expect(await names()).toEqual(['Parent'])
+    expect(await ui.find({ key: 'fold:s-1' })).toMatchObject({ text: '▸ 2' })
+    await ui.press({ key: 'fold:s-1' })
+    await ui.press({ key: 'fold:s-5' })
+    expect(await names()).toEqual(['Parent', 'Child', 'Grandchild'])
+
+    await ui.press({ key: 'ended' })
+    expect(await names()).toEqual(['Child', 'Grandchild'])
+    await ui.press({ key: 'ended' })
+    await ui.unmount()
+  }
 })

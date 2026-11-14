@@ -5,13 +5,17 @@ import type { SessionRow } from '../types'
 import {
   ago,
   cloudSessionId,
+  foldRows,
+  HISTORY_MS,
   look,
+  mergeHistory,
   nestRows,
   parseCloudSessions,
   parseDesktopSession,
   parseProcessTable,
   parseSession,
   projectFolder,
+  readHistory,
   sessionAncestor,
   sortRows,
   switchLink,
@@ -28,7 +32,10 @@ const REFRESH_MS = 5_000
 // Each cloud refresh is an API call, not a folder read.
 const CLOUD_REFRESH_MS = 30_000
 const REMOTE_SERVER = 'claude-code-remote'
-const CLOUD_LIMIT = 10
+// Enough to reach back HISTORY_MS for most people; older ones are dropped.
+const CLOUD_LIMIT = 50
+// $.store key: every session seen in the last HISTORY_MS, kept across sessions.
+const HISTORY_KEY = 'history'
 
 const rows = atom({ plugin: 'sessions', key: 'rows' } as const, [])
 const sessionId = atom({ plugin: 'sessions', key: 'sessionId' } as const, '')
@@ -44,6 +51,8 @@ const parents = atom({ plugin: 'sessions', key: 'parents' } as const, {})
 // Session id to the model its transcript named, so a transcript is no longer
 // read once it has named one.
 const models = atom({ plugin: 'sessions', key: 'models' } as const, {})
+const folded = atom({ plugin: 'sessions', key: 'folded' } as const, {})
+const showEnded = atom({ plugin: 'sessions', key: 'showEnded' } as const, true)
 // A lookup that couldn't finish (process table unread, a session file mid-write,
 // no model in the transcript yet) is tried again after this long, not every refresh.
 const RETRY_MS = 60_000
@@ -55,7 +64,9 @@ const retryModel = new Map<string, number>()
 // What $.fs.read refuses: a long session's transcript passes it.
 const READ_LIMIT = 4 * 1024 * 1024
 
-type Listing = { found: SessionRow[]; problem: string }
+// unsure: some session file couldn't be read, so a session missing from found
+// may still be running.
+type Listing = { found: SessionRow[]; problem: string; unsure?: boolean }
 
 async function sessionsDir($: EngineInterface) {
   const config = await $.env.get('CLAUDE_CONFIG_DIR')
@@ -203,10 +214,10 @@ async function localRows($: EngineInterface, full: boolean): Promise<Listing> {
   }
   if (!full) {
     const [linked, named] = [await read($, parents), await read($, models)]
-    return { found: found.map(row => ({ ...row, parent: linked[row.id] ?? undefined, model: named[row.id] })), problem }
+    return { found: found.map(row => ({ ...row, parent: linked[row.id] ?? undefined, model: named[row.id] })), problem, unsure: unreadable > 0 }
   }
   const linked = await linkParents($, found, unreadable)
-  return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem }
+  return { found: dir === undefined ? linked : await addDetails($, linked, dir), problem, unsure: unreadable > 0 }
 }
 
 async function cloudRows($: EngineInterface): Promise<Listing> {
@@ -219,13 +230,29 @@ async function cloudRows($: EngineInterface): Promise<Listing> {
   if (found === undefined) {
     return { found: [], problem: "Couldn't read the cloud session list: its format may have changed." }
   }
-  return { found, problem: '' }
+  // The page reaches further back than the history keeps.
+  const at = await $.clock.now()
+  return { found: found.filter(row => row.status === 'busy' || at - row.updatedAt <= HISTORY_MS), problem: '' }
+}
+
+// Every session on this machine shares the store, so each refresh merges into
+// what any of them wrote last. shortcut: two refreshes racing can drop a row
+// one of them added; the next refresh puts a running session back, an ended
+// one is lost.
+async function withHistory($: EngineInterface, found: SessionRow[], at: number, keepMissing: boolean) {
+  const kept = readHistory(await $.store.get(HISTORY_KEY).catch(() => undefined))
+  const { history, rows: merged } = mergeHistory(kept, found, at, keepMissing)
+  await $.store.set(HISTORY_KEY, history).catch((err: unknown) => $.ui.log(`sessions: history not saved: ${String(err)}`, { to: 'debug' }))
+  return merged
 }
 
 async function refresh($: EngineInterface, full = true) {
   const at = await $.clock.now()
-  const { found, problem } = (await read($, cloud)) ? await cloudRows($) : await localRows($, full)
-  await update($, rows, () => sortRows(found))
+  const isCloud = await read($, cloud)
+  const { found, problem, unsure = false } = isCloud ? await cloudRows($) : await localRows($, full)
+  // A listing that failed outright says nothing about which sessions ended.
+  const listed = problem !== '' && found.length === 0 ? found : await withHistory($, found, at, isCloud || unsure)
+  await update($, rows, () => sortRows(listed))
   await update($, error, () => problem)
   await update($, now, () => at)
 }
@@ -323,24 +350,39 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Link, Text } = $.ui.resolve(e)
-    const list = await read($, rows)
+    const all = await read($, rows)
+    const ended = all.filter(row => row.status === 'ended').length
+    const isShowingEnded = await read($, showEnded)
+    const list = isShowingEnded ? all : all.filter(row => row.status !== 'ended')
+    const foldedIds = await read($, folded)
     const current = await read($, sessionId)
     const at = await read($, now)
     const problem = await read($, error)
     // Cloud sessions stay listed after they stop: recent ones, not running ones.
     const kind = (await read($, cloud)) ? 'recent' : 'running'
-    const working = list.filter(row => row.status === 'busy').length
+    const working = all.filter(row => row.status === 'busy').length
+    const live = all.length - ended
+    const days = Math.round(HISTORY_MS / 86_400_000)
 
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" gap={1}>
-          <Text color="claude" bold>{list.length} {kind}</Text>
+          <Text color="claude" bold>{live} {kind}</Text>
           <Text dimColor>· {working} working</Text>
+          {ended > 0 ? <Text dimColor>· {ended} ended</Text> : null}
           <Button key="refresh" label="Refresh" onPress={() => refresh($)} />
+          {ended > 0 ? (
+            <Button
+              key="ended"
+              label={isShowingEnded ? 'Hide ended' : 'Show ended'}
+              onPress={() => update($, showEnded, isShown => !isShown)}
+            />
+          ) : null}
         </Box>
         {problem !== '' ? <Text color="error">{problem}</Text> : null}
-        {problem === '' && list.length === 0 ? <Text dimColor>No {kind} sessions found.</Text> : null}
-        {nestRows(list).map(({ row, depth }) => {
+        {problem === '' && all.length === 0 ? <Text dimColor>No {kind} sessions found.</Text> : null}
+        {ended > 0 && isShowingEnded ? <Text dimColor>Ended sessions stay listed for {days} days.</Text> : null}
+        {foldRows(nestRows(list), foldedIds).map(({ row, depth, under, isFolded }) => {
           const { dot, label, color, isDim } = look(row, at)
           const link = row.id === current ? undefined : switchLink(row)
           return (
@@ -349,7 +391,14 @@ export const register: Register = on => {
                 {depth > 0 ? <Text dimColor>└</Text> : null}
                 <Text color={color} dimColor={isDim}>{dot}</Text>
                 <Text bold={row.id === current} dimColor={isDim}>{row.name}</Text>
-                {link !== undefined ? (
+                {under > 0 ? (
+                  <Button
+                    key={`fold:${row.id}`}
+                    label={`${isFolded ? '▸' : '▾'} ${under}`}
+                    onPress={() => update($, folded, ids => ({ ...ids, [row.id]: !isFolded }))}
+                  />
+                ) : null}
+                {link !== undefined && row.status !== 'ended' ? (
                   <Button key={`switch:${row.id}`} label="Switch" onPress={() => openLink($, link)} />
                 ) : null}
                 {row.url !== undefined && row.id !== current ? <Link href={row.url} label="Open" /> : null}

@@ -93,7 +93,8 @@ export const cloudSessionId = (remoteId: string) => `session_${remoteId.replace(
 export const switchLink = (row: SessionRow) =>
   row.hostSessionId === undefined ? undefined : `claude://claude.ai/epitaxy/${encodeURIComponent(row.hostSessionId)}`
 
-// Working sessions first, then the most recently active; one row per session.
+// Working sessions first, then the most recently active, ended ones last; one
+// row per session.
 export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
   const newest = new Map<string, SessionRow>()
   for (const row of rows) {
@@ -101,6 +102,8 @@ export const sortRows = (rows: readonly SessionRow[]): SessionRow[] => {
     if (seen === undefined || row.updatedAt > seen.updatedAt) newest.set(row.id, row)
   }
   return [...newest.values()].sort((a, b) => {
+    const ended = Number(a.status === 'ended') - Number(b.status === 'ended')
+    if (ended !== 0) return ended
     const busy = Number(b.status === 'busy') - Number(a.status === 'busy')
     return busy !== 0 ? busy : b.updatedAt - a.updatedAt
   })
@@ -185,6 +188,64 @@ export const nestRows = (rows: readonly SessionRow[]) => {
   return nested
 }
 
+// How long a session stays listed after it was last seen.
+export const HISTORY_MS = 3 * 24 * 60 * 60_000
+
+// What the store keeps between sessions: every session seen in the last
+// HISTORY_MS, as last seen.
+export type History = Record<string, SessionRow & { seenAt: number }>
+
+// The store's value, not trusted to be the shape this version wrote.
+export const readHistory = (raw: unknown): History => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const kept: History = {}
+  for (const [id, row] of Object.entries(raw as Record<string, unknown>)) {
+    const o = row as Partial<SessionRow & { seenAt: number }> | null
+    if (typeof o !== 'object' || o === null || o.id !== id || typeof o.name !== 'string') continue
+    if (typeof o.seenAt !== 'number' || typeof o.updatedAt !== 'number' || typeof o.status !== 'string') continue
+    kept[id] = { ...(o as SessionRow & { seenAt: number }), cwd: typeof o.cwd === 'string' ? o.cwd : '' }
+  }
+  return kept
+}
+
+// found is every session listed now. A local session missing from it has
+// ended (its file goes when it exits). keepMissing: a missing session keeps its
+// last status, for a cloud page it has only dropped out of, or a listing with
+// an unreadable file. Sessions not seen for HISTORY_MS go.
+export const mergeHistory = (kept: History, found: readonly SessionRow[], at: number, keepMissing: boolean) => {
+  const history: History = {}
+  for (const [id, row] of Object.entries(kept)) {
+    if (at - row.seenAt > HISTORY_MS) continue
+    const { pid: _pid, ...rest } = row
+    history[id] = keepMissing || row.status === 'ended' ? row : { ...rest, status: 'ended', endedAt: at }
+  }
+  // A link or model learned earlier stays when this listing could not learn it
+  // again: after a restart, a parent that has since exited is no process.
+  for (const row of found) {
+    const was = kept[row.id]
+    history[row.id] = { ...row, parent: row.parent ?? was?.parent, model: row.model ?? was?.model, seenAt: at }
+  }
+  const rows = Object.values(history).map(({ seenAt: _seenAt, ...row }) => row as SessionRow)
+  return { history, rows }
+}
+
+// nestRows' order with each row's count of sessions under it, leaving out the
+// rows under a folded one.
+export const foldRows = (nested: readonly { row: SessionRow; depth: number }[], folded: Readonly<Record<string, boolean>>) => {
+  const shown: { row: SessionRow; depth: number; under: number; isFolded: boolean }[] = []
+  let hideBelow: number | undefined
+  nested.forEach(({ row, depth }, i) => {
+    if (hideBelow !== undefined && depth > hideBelow) return
+    hideBelow = undefined
+    let under = 0
+    while (i + under + 1 < nested.length && nested[i + under + 1]!.depth > depth) under++
+    const isFolded = under > 0 && folded[row.id] === true
+    if (isFolded) hideBelow = depth
+    shown.push({ row, depth, under, isFolded })
+  })
+  return shown
+}
+
 export const ago = (ms: number) => {
   const minutes = Math.floor(Math.max(0, ms) / 60_000)
   if (minutes < 1) return 'now'
@@ -202,6 +263,7 @@ export const look = (row: SessionRow, now: number): Look => {
   }
   if (row.status === 'idle') return { dot: '○', label: 'idle', color: 'success', isDim: false }
   if (row.status === 'blocked') return { dot: '◐', label: 'needs input', color: 'warning', isDim: false }
+  if (row.status === 'ended') return { dot: '·', label: 'ended', isDim: true }
   if (row.status === 'failed') return { dot: '✗', label: 'failed', color: 'error', isDim: false }
   return { dot: '·', label: row.status, isDim: true }
 }

@@ -19,6 +19,8 @@ export type SessionRow = {
   parent?: string
   // The model this session runs on, from the desktop app's file or its transcript.
   model?: string
+  // When this session's file was found gone: it is history now, status 'ended'.
+  endedAt?: number
 }
 
 declare module 'claude-code' {
@@ -32,6 +34,9 @@ declare module 'claude-code' {
       cloud: boolean
       parents: Record<string, string | null>
       models: Record<string, string>
+      // Session id to true for a row whose sessions under it are folded away.
+      folded: Record<string, boolean>
+      showEnded: boolean
     }
   }
 }
