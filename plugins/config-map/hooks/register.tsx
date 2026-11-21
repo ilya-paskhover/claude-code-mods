@@ -284,21 +284,48 @@ const summary = (s: Scan) => {
   )
 }
 
+const COMMAND = /^\s*\/config-map(?:\s|$)/
+
+async function run($: EngineInterface): Promise<string> {
+  const s = await refresh($)
+  const opened = await $.ui.open({ id: PANE, title: TITLE })
+  return opened.isPlaced ? summary(s) : `${summary(s)}\nPane not drawn: ${opened.reason}`
+}
+
+// A mod installed into a running session (or loaded by /reload-plugins)
+// never sees that session's `session.start`, so the command is also
+// registered on the first prompt. Module state starts over on a reload, so
+// this runs again then, and registering twice is harmless.
+let isRegistered = false
+
+async function ensureCommand($: EngineInterface) {
+  if (isRegistered) return
+  isRegistered = true
+  await $.command.register({
+    name: 'config-map',
+    description: 'Map CLAUDE.md blocks, settings, skills and MCP by size, category and model',
+    immediate: true,
+  })
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'config-map',
-      description: 'Map CLAUDE.md blocks, settings, skills and MCP by size, category and model',
-      immediate: true,
-    })
+    await ensureCommand($)
     return next(e)
   })
 
-  on('command.run', { command: 'config-map' }, async $ => {
-    const s = await refresh($)
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
-    return { text: opened.isPlaced ? summary(s) : `${summary(s)}\nPane not drawn: ${opened.reason}` }
+  on('prompt.submit', async ($, e, next) => {
+    if (isRegistered) return next(e)
+    await ensureCommand($)
+    // The command was unknown when this prompt was typed, so it arrived as
+    // text: answer it here instead of sending it to the model.
+    // Only the person's own typing counts: never a peer's or a notification's text.
+    const isOwn = ['composer', 'bridge', 'sdk'].includes(e.origin.kind)
+    if (isOwn && e.command === undefined && COMMAND.test(e.text)) return { drop: await run($) }
+    return next(e)
   })
+
+  on('command.run', { command: 'config-map' }, async $ => ({ text: await run($) }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Markdown, Select, Text } = $.ui.resolve(e)

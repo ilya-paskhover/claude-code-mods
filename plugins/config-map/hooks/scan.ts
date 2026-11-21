@@ -14,7 +14,7 @@ export const tokens = (text: string): number => {
   return Math.ceil(ascii / 4 + other / 2)
 }
 
-const FENCE = /^\s*(```|~~~)/
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/
 const MODEL_MARK = /<!--\s*model\s*:\s*([^>]*?)\s*-->/i
 const CATEGORY_MARK = /<!--\s*category\s*:\s*([^>]*?)\s*-->/i
@@ -52,6 +52,40 @@ export const categoryOf = (heading: string, body: string): string => {
   return 'General'
 }
 
+// A CommonMark code fence: it opens on 3+ backticks or tildes and closes only
+// on a run of the same character, at least as long, with nothing after it.
+// Returns a function that says, line by line, whether that line is code
+// (a fence line included).
+export const fenceTracker = () => {
+  let open: { ch: string; len: number } | null = null
+  return (line: string): boolean => {
+    const m = FENCE.exec(line)
+    const run = m?.[1] ?? ''
+    const rest = m?.[2] ?? ''
+    if (open !== null) {
+      if (m && run[0] === open.ch && run.length >= open.len && rest.trim() === '') open = null
+      return true
+    }
+    // A backtick fence's info string cannot hold a backtick: that is inline code.
+    if (m && !(run[0] === '`' && rest.includes('`'))) {
+      open = { ch: run[0] ?? '`', len: run.length }
+      return true
+    }
+    return false
+  }
+}
+
+// The index of a frontmatter block's closing `---`, or -1. A file that merely
+// opens with a horizontal rule is not frontmatter: the first line inside must
+// read as YAML (`key:`).
+export const frontmatterEnd = (lines: readonly string[]): number => {
+  if (lines[0]?.trim() !== '---') return -1
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---')
+  if (end < 0) return -1
+  const first = lines.slice(1, end).find(l => l.trim() !== '')
+  return first !== undefined && /^[A-Za-z_][\w-]*\s*:/.test(first) ? end : -1
+}
+
 // Splits markdown into blocks at headings (outside code fences). Text before
 // the first heading is its own block. A heading's model tag passes down to
 // the headings nested under it, so "## Focus" under "# Opus 5.5 tuning" is
@@ -60,16 +94,13 @@ export const splitBlocks = (text: string, file: string): Block[] => {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   // Frontmatter (a rule's `paths:`, say) is metadata, not a block: blank it,
   // keeping the line numbers.
-  if (lines[0]?.trim() === '---') {
-    const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---')
-    if (end > 0) for (let i = 0; i <= end; i++) lines[i] = ''
-  }
+  const end = frontmatterEnd(lines)
+  for (let i = 0; i <= end; i++) lines[i] = ''
   const raw: { heading: string; level: number; lines: string[]; start: number }[] = []
   let current = { heading: '', level: 0, lines: [] as string[], start: 1 }
-  let inFence = false
+  const isCode = fenceTracker()
   lines.forEach((line, i) => {
-    if (FENCE.test(line)) inFence = !inFence
-    const h = inFence ? null : HEADING.exec(line)
+    const h = isCode(line) ? null : HEADING.exec(line)
     if (h) {
       raw.push(current)
       current = { heading: h[2] ?? '', level: (h[1] ?? '#').length, lines: [line], start: i + 1 }
@@ -107,13 +138,9 @@ export const splitBlocks = (text: string, file: string): Block[] => {
 // code, starting a word, not an email address.
 export const findImports = (text: string): string[] => {
   const found: string[] = []
-  let inFence = false
+  const isCode = fenceTracker()
   for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
-    if (FENCE.test(line)) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence) continue
+    if (isCode(line)) continue
     const bare = line.replace(/`[^`]*`/g, '')
     for (const m of bare.matchAll(/(?:^|\s)@((?:~\/|\.{0,2}\/|[A-Za-z]:[\\/])?[^\s`'"()<>]+)/g)) {
       const path = (m[1] ?? '').replace(/[.,;:!?]+$/, '')

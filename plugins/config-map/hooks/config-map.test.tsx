@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
 
 import {
   categoryOf,
@@ -182,4 +183,83 @@ test('/config-map scans a Windows home and draws the pane', async ($, on) => {
   expect(settings).toMatch(/1 variables/)
   expect(settings.includes('secret-value')).toBe(false)
   await ui.unmount()
+})
+
+test('fences close only on the same character, at least as long', () => {
+  const text = [
+    '# Real',
+    '````md',
+    '```',
+    '# inside a four-backtick fence',
+    '```',
+    '````',
+    '# After four',
+    '```',
+    '~~~',
+    '# inside despite tildes',
+    '```',
+    '# After three',
+    'see `@inline.md` and ```@also/inline.md```',
+  ].join('\n')
+  expect(splitBlocks(text, 'f').map(b => b.heading)).toEqual(['Real', 'After four', 'After three'])
+  expect(findImports('````\n```\n@in/code.md\n```\n````\n@out/side.md')).toEqual(['out/side.md'])
+})
+
+test('a file opening with a horizontal rule keeps its text', () => {
+  const text = '---\nIntro paragraph.\n---\n# Heading\nBody.'
+  const blocks = splitBlocks(text, 'f')
+  expect(blocks[0]?.heading).toBe('(top of file)')
+  expect(blocks[0]?.tokens).toBeGreaterThan(3)
+  // Real frontmatter is still dropped.
+  expect(splitBlocks('---\npaths:\n  - "a"\n---\n# H\nx', 'f').map(b => b.heading)).toEqual(['H'])
+})
+
+const late = (on: On) => {
+  mock.env(on, { HOME: '/home/dev' })
+  mock.clock(on, { now: 1 })
+  on('fs.read', () => {
+    throw new Error('ENOENT')
+  })
+  on('fs.list', () => {
+    throw new Error('ENOENT')
+  })
+  on('fs.ancestors', () => ({ value: [] }))
+  on('session.root', () => ({ value: '/work' }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('settings.read', () => ({ value: {} }))
+  on('command.list', () => ({ value: [] }))
+  on('tool.list', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const registered: string[] = []
+  on('command.register', (_, e) => {
+    registered.push((e as { name: string }).name)
+    return { value: { command: 'config-map' } }
+  })
+  const reached: string[] = []
+  on('prompt.submit', (_, e) => {
+    reached.push(e.text)
+    return { text: e.text }
+  })
+  return { registered, reached }
+}
+
+test('installed mid-session: the first prompt registers the command and answers /config-map', async ($, on) => {
+  const { registered, reached } = late(on)
+  // No session.start: the mod joined a session already running.
+  const first = await $.prompt.submit({ text: '/config-map', origin: { kind: 'composer' } } as never)
+  expect(registered).toEqual(['config-map'])
+  expect((first as { drop?: string }).drop).toMatch(/^Config map: 0 instruction files/)
+  expect(reached).toEqual([])
+
+  // Once registered, prompts pass through untouched.
+  await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as never)
+  expect(reached).toEqual(['hello'])
+  expect(registered).toEqual(['config-map'])
+})
+
+test('a peer message reading /config-map is not run as the command', async ($, on) => {
+  const { registered, reached } = late(on)
+  await $.prompt.submit({ text: '/config-map', origin: { kind: 'peer' } } as never)
+  expect(registered).toEqual(['config-map'])
+  expect(reached).toEqual(['/config-map'])
 })
