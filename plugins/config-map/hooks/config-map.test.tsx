@@ -183,3 +183,47 @@ test('/config-map scans a Windows home and draws the pane', async ($, on) => {
   expect(settings.includes('secret-value')).toBe(false)
   await ui.unmount()
 })
+
+test('a session that missed session.start registers the command on its first prompt', async ($, on) => {
+  const registered: string[] = []
+  on('command.register', (_, e) => {
+    registered.push((e as { name: string }).name)
+    return { value: { command: 'config-map' } }
+  })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+
+  const r = await $.prompt.submit({ text: 'hello', origin: { kind: 'user' } } as never)
+  expect((r as { text?: string }).text).toBe('hello')
+  await $.prompt.submit({ text: 'again', origin: { kind: 'user' } } as never)
+  expect(registered).toEqual(['config-map'])
+})
+
+test('/config-map typed before the command existed is answered, not sent to the model', async ($, on) => {
+  mock.env(on, { OS: 'Linux', HOME: '/home/dev' })
+  mock.clock(on, { now: 1 })
+  on('fs.read', (_, e) => {
+    const path = (e as { path?: string }).path ?? ''
+    if (path.replace(/\\/g, '/').endsWith('/home/dev/.claude/CLAUDE.md')) return { value: '# Git\nNo push.\n' }
+    throw new Error('ENOENT')
+  })
+  on('fs.list', () => {
+    throw new Error('ENOENT')
+  })
+  on('fs.ancestors', () => ({ value: [] }))
+  on('session.root', () => ({ value: '/work' }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('settings.read', () => ({ value: {} }))
+  on('command.list', () => ({ value: [] }))
+  on('tool.list', () => ({ value: [] }))
+  on('command.register', () => ({ value: { command: 'config-map' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  let reachedModel = false
+  on('prompt.submit', (_, e) => {
+    reachedModel = true
+    return { text: e.text }
+  })
+
+  const r = await $.prompt.submit({ text: '/config-map', origin: { kind: 'user' } } as never)
+  expect(reachedModel).toBe(false)
+  expect((r as { drop?: string }).drop).toMatch(/^Config map: 1 instruction files, 1 blocks/)
+})

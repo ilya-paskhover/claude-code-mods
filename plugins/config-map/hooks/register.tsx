@@ -284,21 +284,55 @@ const summary = (s: Scan) => {
   )
 }
 
+const COMMAND = {
+  name: 'config-map',
+  description: 'Map CLAUDE.md blocks, settings, skills and MCP by size, category and model',
+  immediate: true,
+} as const
+
+// A line typed as `/config-map` that reached prompt.submit as plain text: the
+// session had not registered the command yet.
+const TYPED = /^\s*\/config-map\s*$/
+
+const run = async ($: EngineInterface): Promise<string> => {
+  const s = await refresh($)
+  const opened = await $.ui.open({ id: PANE, title: TITLE })
+  return opened.isPlaced ? summary(s) : `${summary(s)}\nPane not drawn: ${opened.reason}`
+}
+
+// `session.start` fires once per session. A session that was already running
+// when the plugin was installed, or that loaded it through /reload-plugins,
+// never sees it, so the command is also registered on the first prompt this
+// copy of the module hears. A reload starts the flag over; registering a name
+// again replaces it.
+let isRegistered = false
+const ensureCommand = async ($: EngineInterface): Promise<void> => {
+  if (isRegistered) return
+  await $.command.register(COMMAND)
+  isRegistered = true
+}
+
 export const register: Register = on => {
+  isRegistered = false
+
   on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'config-map',
-      description: 'Map CLAUDE.md blocks, settings, skills and MCP by size, category and model',
-      immediate: true,
-    })
+    await ensureCommand($)
     return next(e)
   })
 
-  on('command.run', { command: 'config-map' }, async $ => {
-    const s = await refresh($)
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
-    return { text: opened.isPlaced ? summary(s) : `${summary(s)}\nPane not drawn: ${opened.reason}` }
+  on('prompt.submit', async ($, e, next) => {
+    try {
+      await ensureCommand($)
+    } catch {
+      // Registration is retried on the next prompt; the prompt itself goes on.
+    }
+    // The line that brought us here was typed before the command existed: answer
+    // it now instead of sending `/config-map` to the model as text.
+    if (!e.command && !e.isMeta && TYPED.test(e.text)) return { drop: await run($) }
+    return next(e)
   })
+
+  on('command.run', { command: 'config-map' }, async $ => ({ text: await run($) }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Markdown, Select, Text } = $.ui.resolve(e)
