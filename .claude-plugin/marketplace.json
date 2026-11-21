@@ -1,6 +1,6 @@
 {
   "name": "claude-code-mods",
-  "description": "Small Claude Code mods: a last-turn summary status line, a cross-project notes pane, and a running-sessions pane.",
+  "description": "Small Claude Code mods: a last-turn summary status line, a cross-project notes pane, a running-sessions pane and a config map.",
   "owner": {
     "name": "Ilya Paskhover",
     "url": "https://github.com/ilya-paskhover"
@@ -20,6 +20,11 @@
       "name": "sessions",
       "source": "./plugins/sessions",
       "description": "A side pane listing the sessions running on this machine and their status."
+    },
+    {
+      "name": "config-map",
+      "source": "./plugins/config-map",
+      "description": "A side pane mapping your CLAUDE.md blocks, settings, skills and MCP servers by size, category and model."
     }
   ]
 }

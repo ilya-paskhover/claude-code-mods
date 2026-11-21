@@ -7,6 +7,7 @@ Small mods for [Claude Code](https://claude.com/claude-code), built on its funct
 | [turn-pulse](plugins/turn-pulse) | A status line summarizing the last turn, live while Claude works, with an optional band above the prompt. |
 | [notes](plugins/notes) | `/note` saves chat text to a notes list shared across projects; `/notes` opens it in a side pane. |
 | [sessions](plugins/sessions) | `/sessions` opens a side pane listing the sessions running on this machine and whether each is working or idle. |
+| [config-map](plugins/config-map) | `/config-map` opens a side pane mapping what your config loads: CLAUDE.md blocks by size, category and model, settings keys per file, skills, agents and MCP servers. |
 
 > **Early access.** The mod API these use is marked EARLY ACCESS and may change between Claude Code releases. Built and tested on Claude Code 2.1.293, on Windows, in the desktop app's Code tab.
 
@@ -30,6 +31,10 @@ claude plugin install notes@claude-code-mods
 
 ```
 claude plugin install sessions@claude-code-mods
+```
+
+```
+claude plugin install config-map@claude-code-mods
 ```
 
 This installs in the user scope, so the mod loads in every new session, including sessions the desktop app starts. Inside an interactive `claude` session, `/plugin marketplace add` and `/plugin install` take the same arguments. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
@@ -138,6 +143,32 @@ Limits:
 - In the desktop app, a click on the pane first gives it focus, so a button may need two clicks: one to focus the pane, one to press. The pane opens focused, so the first click right after `/sessions` works; after you click elsewhere, click anywhere in the pane (or Refresh) first. Press Esc to give the keyboard back to the prompt.
 - Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
 - A session that crashed can leave its file behind. The session file only changes when the status changes, so a "working" row shows dimmed as "working?" once it has been busy for 30 minutes: either a long turn or a crash. The pane can't tell which.
+
+## config-map
+
+`/config-map` scans your configuration and opens a side pane with three tabs:
+
+- **Instructions**: every instruction file that loads (managed, user `CLAUDE.md`, `~/.claude/rules`, project and local `CLAUDE.md`, `.claude/rules`, and each `@import` they pull in), with an approximate token count and whether it loads always or on demand (rules with `paths:` frontmatter). Below that, every block of those files, split at headings, with its category and the model it is for, plus totals by model and by category. Blocks tagged for a model other than the one the session runs are marked ⚠, and the **Blocks for** picker filters the table to one model.
+- **Settings**: user, project, local, `--settings` and managed settings, read through Claude Code itself, so each platform's paths are covered. Each top-level key shows what it holds (`3 allow, 1 deny`, `12 variables`, hook event names) and its size. Values are never shown, since `env` and helper commands can hold secrets. Settings are not sent to the model, so they cost no context tokens.
+- **Skills · MCP · Agents**: skills and commands grouped by source with the largest listed, MCP servers by tool count, and user and project agent files.
+
+Tagging blocks. A heading that names a model (`# Opus 5.5 tuning`, `## Sonnet 5.5 additions`) tags its block and the headings nested under it. To tag any block, put a marker under its heading:
+
+```markdown
+## Subagents
+<!-- model: opus-5.5 -->
+<!-- category: Agents -->
+```
+
+Several models go comma-separated (`<!-- model: opus-5.5, sonnet-5.5 -->`). Without a category marker, the category is guessed from keywords (Git, Secrets, Email, Safety, Testing, Agents, Reporting, Style, General).
+
+To drop a model's blocks in one step when you switch models, move them to their own file, say `~/.claude/models/opus-5.5.md`, and add `@models/opus-5.5.md` to `~/.claude/CLAUDE.md`. Removing that one line drops them all, and the pane shows the imported file as its own row.
+
+Limits:
+
+- Token counts are estimates (about 4 characters a token for English, 2 for Cyrillic). `/context` gives the engine's own count.
+- Your claude.ai profile preferences, plugin-provided agents and the system prompt are not files on disk, so the pane does not list them; `/context` counts them.
+- The scan runs when you type `/config-map` or press Refresh, not on every change.
 
 ## Developing
 
