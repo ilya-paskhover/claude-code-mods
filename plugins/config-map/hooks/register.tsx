@@ -284,44 +284,53 @@ const summary = (s: Scan) => {
   )
 }
 
-const COMMAND = /^\s*\/config-map(?:\s|$)/
+const COMMAND = {
+  name: 'config-map',
+  description: 'Map CLAUDE.md blocks, settings, skills and MCP by size, category and model',
+  immediate: true,
+} as const
 
-async function run($: EngineInterface): Promise<string> {
+// A line typed as `/config-map` that reached prompt.submit as plain text: the
+// session had not registered the command yet.
+const TYPED = /^\s*\/config-map\s*$/
+
+const run = async ($: EngineInterface): Promise<string> => {
   const s = await refresh($)
   const opened = await $.ui.open({ id: PANE, title: TITLE })
   return opened.isPlaced ? summary(s) : `${summary(s)}\nPane not drawn: ${opened.reason}`
 }
 
-// A mod installed into a running session (or loaded by /reload-plugins)
-// never sees that session's `session.start`, so the command is also
-// registered on the first prompt. Module state starts over on a reload, so
-// this runs again then, and registering twice is harmless.
+// `session.start` fires once per session. A session that was already running
+// when the plugin was installed, or that loaded it through /reload-plugins,
+// never sees it, so the command is also registered on the first prompt this
+// copy of the module hears. A reload starts the flag over; registering a name
+// again replaces it.
 let isRegistered = false
-
-async function ensureCommand($: EngineInterface) {
+const ensureCommand = async ($: EngineInterface): Promise<void> => {
   if (isRegistered) return
+  await $.command.register(COMMAND)
   isRegistered = true
-  await $.command.register({
-    name: 'config-map',
-    description: 'Map CLAUDE.md blocks, settings, skills and MCP by size, category and model',
-    immediate: true,
-  })
 }
 
 export const register: Register = on => {
+  isRegistered = false
+
   on('session.start', async ($, e, next) => {
     await ensureCommand($)
     return next(e)
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (isRegistered) return next(e)
-    await ensureCommand($)
-    // The command was unknown when this prompt was typed, so it arrived as
-    // text: answer it here instead of sending it to the model.
+    try {
+      await ensureCommand($)
+    } catch {
+      // Registration is retried on the next prompt; the prompt itself goes on.
+    }
+    // The line that brought us here was typed before the command existed: answer
+    // it now instead of sending `/config-map` to the model as text.
     // Only the person's own typing counts: never a peer's or a notification's text.
     const isOwn = ['composer', 'bridge', 'sdk'].includes(e.origin.kind)
-    if (isOwn && e.command === undefined && COMMAND.test(e.text)) return { drop: await run($) }
+    if (isOwn && !e.command && !e.isMeta && TYPED.test(e.text)) return { drop: await run($) }
     return next(e)
   })
 

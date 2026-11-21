@@ -263,3 +263,12 @@ test('a peer message reading /config-map is not run as the command', async ($, o
   expect(registered).toEqual(['config-map'])
   expect(reached).toEqual(['/config-map'])
 })
+
+test('a session that missed session.start registers the command on its first prompt', async ($, on) => {
+  const { registered, reached } = late(on)
+  const r = await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as never)
+  expect((r as { text?: string }).text).toBe('hello')
+  await $.prompt.submit({ text: 'again', origin: { kind: 'composer' } } as never)
+  expect(registered).toEqual(['config-map'])
+  expect(reached).toEqual(['hello', 'again'])
+})
