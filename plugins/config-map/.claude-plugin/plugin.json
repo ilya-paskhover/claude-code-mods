@@ -1,6 +1,6 @@
 {
   "name": "config-map",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A side pane that maps what your Claude Code config loads: CLAUDE.md, rules and imports split into blocks with size, category and model tag; settings.json keys per source; skills, agents and MCP servers by size.",
   "author": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
   "homepage": "https://github.com/ilya-paskhover/claude-code-mods",

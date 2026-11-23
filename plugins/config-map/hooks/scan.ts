@@ -18,18 +18,26 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/
 const MODEL_MARK = /<!--\s*model\s*:\s*([^>]*?)\s*-->/i
 const CATEGORY_MARK = /<!--\s*category\s*:\s*([^>]*?)\s*-->/i
-const MODEL_NAME = /\b(opus|sonnet|haiku|fable)[\s-]*(\d+(?:[.-]\d+)?)/gi
+// Name first ("claude-opus-4-1-20250805", "Sonnet 5.5"). Versions are one or
+// two digits, so a date stamp after them ("-20250514") is not read as a minor.
+const MODEL_NAME = /\b(opus|sonnet|haiku|fable)[\s-]*(\d{1,2}(?!\d)(?:[.-]\d{1,2}(?!\d))?)/gi
+// Version first, the older ids: "claude-3-7-sonnet-20250219", "Claude 3.5 Haiku".
+const MODEL_NAME_OLD = /\bclaude[\s-](\d)(?:[.-](\d))?[\s-](opus|sonnet|haiku)\b/gi
 
 const titleCase = (word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
 
 // "opus-5.5, Sonnet 5.5" and "claude-opus-5-5" both become ["Opus 5.5", "Sonnet 5.5"].
 export const modelsIn = (text: string): string[] => {
-  const found: string[] = []
+  const found: { at: number; name: string }[] = []
   for (const m of text.matchAll(MODEL_NAME)) {
-    const name = `${titleCase(m[1] ?? '')} ${(m[2] ?? '').replace('-', '.')}`
-    if (!found.includes(name)) found.push(name)
+    found.push({ at: m.index ?? 0, name: `${titleCase(m[1] ?? '')} ${(m[2] ?? '').replace('-', '.')}` })
   }
-  return found
+  for (const m of text.matchAll(MODEL_NAME_OLD)) {
+    found.push({ at: m.index ?? 0, name: `${titleCase(m[3] ?? '')} ${m[1]}${m[2] ? `.${m[2]}` : ''}` })
+  }
+  const names: string[] = []
+  for (const f of found.sort((a, b) => a.at - b.at)) if (!names.includes(f.name)) names.push(f.name)
+  return names
 }
 
 // Ordered: the first rule whose words appear wins. A marker overrides all.

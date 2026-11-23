@@ -70,6 +70,17 @@ test('model names normalize', () => {
   expect(modelsIn('opus')).toEqual([])
 })
 
+test('model ids with a date stamp keep their version', () => {
+  expect(modelsIn('claude-opus-4-20250514')).toEqual(['Opus 4'])
+  expect(modelsIn('anthropic.claude-sonnet-4-20250514-v1:0')).toEqual(['Sonnet 4'])
+  expect(modelsIn('claude-opus-4-1-20250805')).toEqual(['Opus 4.1'])
+  expect(modelsIn('claude-sonnet-4-5-20250929')).toEqual(['Sonnet 4.5'])
+  expect(modelsIn('claude-3-7-sonnet-20250219')).toEqual(['Sonnet 3.7'])
+  expect(modelsIn('claude-3-haiku-20240307')).toEqual(['Haiku 3'])
+  expect(modelsIn('Claude 3.5 Haiku, then Opus 5.5')).toEqual(['Haiku 3.5', 'Opus 5.5'])
+  expect(modelsIn('sonnet-20250219')).toEqual([])
+})
+
 test('categories: marker first, then heading, then body', () => {
   expect(categoryOf('Opus tuning', '<!-- category: Reporting -->\nsubagent')).toBe('Reporting')
   expect(categoryOf('Git rules', 'never read .env')).toBe('Git')
