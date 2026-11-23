@@ -2,7 +2,6 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import {
-  categoryOf,
   describeKey,
   findImports,
   isOnDemand,
@@ -55,13 +54,13 @@ test('splits at headings, outside code fences', () => {
   expect(blocks.map(b => b.line)).toEqual([1, 3, 6, 10, 13, 21])
 })
 
-test('model tags come from headings, markers and parents', () => {
+test('model tags come from headings and their parents; comment markers are ignored', () => {
   const by = Object.fromEntries(splitBlocks(CLAUDE_MD, 'f').map(b => [b.heading, b.models]))
   expect(by['Style']).toEqual([])
   expect(by['Opus 5.5 optional tuning']).toEqual(['Opus 5.5'])
   expect(by['Subagents']).toEqual(['Opus 5.5'])
   expect(by['Sonnet 5.5 additions']).toEqual(['Sonnet 5.5'])
-  expect(by['Email']).toEqual(['Opus 5.5', 'Sonnet 5.5'])
+  expect(by['Email']).toEqual(['Sonnet 5.5'])
 })
 
 test('model names normalize', () => {
@@ -79,13 +78,6 @@ test('model ids with a date stamp keep their version', () => {
   expect(modelsIn('claude-3-haiku-20240307')).toEqual(['Haiku 3'])
   expect(modelsIn('Claude 3.5 Haiku, then Opus 5.5')).toEqual(['Haiku 3.5', 'Opus 5.5'])
   expect(modelsIn('sonnet-20250219')).toEqual([])
-})
-
-test('categories: marker first, then heading, then body', () => {
-  expect(categoryOf('Opus tuning', '<!-- category: Reporting -->\nsubagent')).toBe('Reporting')
-  expect(categoryOf('Git rules', 'never read .env')).toBe('Git')
-  expect(categoryOf('Misc', 'Never read .env files')).toBe('Secrets')
-  expect(categoryOf('Misc', 'nothing here')).toBe('General')
 })
 
 test('imports skip code, emails and inline code', () => {
@@ -181,7 +173,7 @@ test('/config-map scans a Windows home and draws the pane', async ($, on) => {
 
   // A block row folds and unfolds to show the block's own lines.
   const opusRow = 'b:C:/Users/dev/.claude/CLAUDE.md:4'
-  expect((await ui.find({ key: opusRow }))?.text).toMatch(/Opus 5\.5 tuning.*Opus 5\.5 ⚠/)
+  expect((await ui.find({ key: opusRow }))?.text).toMatch(/Opus 5\.5 tuning.*L4-7 · Opus 5\.5 ⚠/)
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
   await ui.press({ key: opusRow })
   expect(String((await ui.find({ type: 'Code' }))?.props.source)).toBe('# Opus 5.5 tuning\nFocus.\n\n@models/sonnet.md')
@@ -189,6 +181,9 @@ test('/config-map scans a Windows home and draws the pane', async ($, on) => {
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
 
   await ui.press({ key: 'tab-settings' })
+  const table = String(((await ui.find({ type: 'Markdown' })) as { props: { text?: unknown } } | undefined)?.props.text)
+  expect(table).toMatch(/\| user \| `~\/\.claude\/settings\.json` \| 2 \|/)
+  expect(table).toMatch(/\| project \| .* \| empty or absent \|/)
   expect((await ui.find({ key: 's:user:env' }))?.text).toMatch(/TOKEN/)
   await ui.press({ key: 's:user:env' })
   const env = String((await ui.find({ type: 'Code' }))?.props.source)

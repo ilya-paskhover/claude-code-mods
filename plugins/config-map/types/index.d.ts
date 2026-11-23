@@ -6,10 +6,9 @@ export type Block = {
   level: number
   // The block's own lines, heading included, as the file has them.
   text: string
-  // Models the block is for: from a `<!-- model: ... -->` marker, a model
-  // named in its heading, or a parent heading. Empty: every model.
+  // Models the block is for: named in its heading or a parent heading.
+  // Empty: every model.
   models: string[]
-  category: string
 }
 
 // One instruction file that loads into context.

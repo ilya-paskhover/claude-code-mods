@@ -7,7 +7,7 @@ Small mods for [Claude Code](https://claude.com/claude-code), built on its funct
 | [turn-pulse](plugins/turn-pulse) | A status line summarizing the last turn, live while Claude works, with an optional band above the prompt. |
 | [notes](plugins/notes) | `/note` saves chat text to a notes list shared across projects; `/notes` opens it in a side pane. |
 | [sessions](plugins/sessions) | `/sessions` opens a side pane listing the sessions running on this machine and whether each is working or idle. |
-| [config-map](plugins/config-map) | `/config-map` opens a side pane mapping your Claude Code config: every CLAUDE.md block by file, category and model, and every settings key per file, each unfolding to its content. |
+| [config-map](plugins/config-map) | `/config-map` opens a side pane mapping your Claude Code config: every CLAUDE.md block by file, line range and model, and every settings key per file, each unfolding to its content. |
 
 > **Early access.** The mod API these use is marked EARLY ACCESS and may change between Claude Code releases. Built and tested on Claude Code 2.1.293, on Windows, in the desktop app's Code tab.
 
@@ -148,18 +148,10 @@ Limits:
 
 `/config-map` scans your configuration and opens a side pane with two tabs. Every row unfolds to its content; **Fold all** closes them.
 
-- **Instructions**: every instruction file that loads (managed, user `CLAUDE.md`, `~/.claude/rules`, project and local `CLAUDE.md`, `.claude/rules`, and each `@import` they pull in), and whether it loads always or on demand (rules with `paths:` frontmatter). Below that, every block of those files, split at headings and grouped by file, with its category and the model it is for. Unfold a block to read its lines. Blocks tagged for a model other than the one the session runs are marked ⚠, and the **Blocks for** picker shows one model's blocks.
-- **Settings**: user, project, local, `--settings` and managed settings, read through Claude Code itself, so each platform's paths are covered. Each top-level key shows a one-line summary (`3 allow, 1 deny`, env variable names, hook event names, a short value) and unfolds to its value as JSON. Every `env` value, and any value under a key that reads like a secret (token, secret, password, credential, auth, API key, helper), shows as `•••`.
+- **Instructions**: every instruction file that loads (managed, user `CLAUDE.md`, `~/.claude/rules`, project and local `CLAUDE.md`, `.claude/rules`, and each `@import` they pull in), and whether it loads always or on demand (rules with `paths:` frontmatter). Below that, every block of those files, split at headings and grouped by file, with its line range and the model it is for. Unfold a block to read its lines. Blocks tagged for a model other than the one the session runs are marked ⚠, and the **Blocks for** picker shows one model's blocks.
+- **Settings**: a table of the user, project, local, `--settings` and managed settings files with their key counts, read through Claude Code itself, so each platform's paths are covered. Below it, each top-level key shows a one-line summary (`3 allow, 1 deny`, env variable names, hook event names, a short value) and unfolds to its value as JSON. Every `env` value, and any value under a key that reads like a secret (token, secret, password, credential, auth, API key, helper), shows as `•••`.
 
-Tagging blocks. A heading that names a model (`# Opus 5.5 tuning`, `## Sonnet 5.5 additions`) tags its block and the headings nested under it. To tag any block, put a marker under its heading:
-
-```markdown
-## Subagents
-<!-- model: opus-5.5 -->
-<!-- category: Agents -->
-```
-
-Several models go comma-separated (`<!-- model: opus-5.5, sonnet-5.5 -->`). Without a category marker, the category is guessed from keywords (Git, Secrets, Email, Safety, Testing, Agents, Reporting, Style, General).
+Tagging blocks. A heading that names a model (`# Opus 5.5 tuning`, `## Sonnet 5.5 additions`, `claude-opus-5-5`) tags its block and the headings nested under it. A heading can name several.
 
 To drop a model's blocks in one step when you switch models, move them to their own file, say `~/.claude/models/opus-5.5.md`, and add `@models/opus-5.5.md` to `~/.claude/CLAUDE.md`. Removing that one line drops them all, and the pane shows the imported file as its own row.
 

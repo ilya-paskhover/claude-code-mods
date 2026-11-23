@@ -1,7 +1,7 @@
 {
   "name": "config-map",
   "version": "0.2.0",
-  "description": "A side pane that maps your Claude Code config: CLAUDE.md, rules and imports split into blocks by category and model tag, and settings.json keys per source, each row unfolding to its content.",
+  "description": "A side pane that maps your Claude Code config: CLAUDE.md, rules and imports split into blocks with line ranges and model tags, and settings.json keys per source, each row unfolding to its content.",
   "author": { "name": "Ilya Paskhover", "url": "https://github.com/ilya-paskhover" },
   "homepage": "https://github.com/ilya-paskhover/claude-code-mods",
   "repository": "https://github.com/ilya-paskhover/claude-code-mods",

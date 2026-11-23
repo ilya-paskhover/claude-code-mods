@@ -4,8 +4,6 @@ import type { Block, KeyRow } from '../types'
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/
-const MODEL_MARK = /<!--\s*model\s*:\s*([^>]*?)\s*-->/i
-const CATEGORY_MARK = /<!--\s*category\s*:\s*([^>]*?)\s*-->/i
 // Name first ("claude-opus-4-1-20250805", "Sonnet 5.5"). Versions are one or
 // two digits, so a date stamp after them ("-20250514") is not read as a minor.
 const MODEL_NAME = /\b(opus|sonnet|haiku|fable)[\s-]*(\d{1,2}(?!\d)(?:[.-]\d{1,2}(?!\d))?)/gi
@@ -26,26 +24,6 @@ export const modelsIn = (text: string): string[] => {
   const names: string[] = []
   for (const f of found.sort((a, b) => a.at - b.at)) if (!names.includes(f.name)) names.push(f.name)
   return names
-}
-
-// Ordered: the first rule whose words appear wins. A marker overrides all.
-const CATEGORY_RULES: [string, RegExp][] = [
-  ['Secrets', /\.env\b|\bsecret|password|\.pem\b|\.ssh\b|credential/i],
-  ['Email', /\bemail|\be-mail|\binbox\b|\botp\b/i],
-  ['Git', /\bgit\b|\bcommit|\bpush\b|\bbranch|\brebase/i],
-  ['Safety', /destructive|\bdelete\b|ask before|confirm/i],
-  ['Testing', /\btests?\b|type-?check|\bbuild\b|\bverify/i],
-  ['Agents', /subagent|\bagents?\b|autonom/i],
-  ['Reporting', /bottom line|heading|bullet|tl;dr|summary|report/i],
-  ['Style', /\bstyle\b|\btone\b|format|\breply\b|\banswer\b|symbol/i],
-]
-
-export const categoryOf = (heading: string, body: string): string => {
-  const mark = CATEGORY_MARK.exec(body)?.[1]
-  if (mark) return mark
-  for (const [name, rule] of CATEGORY_RULES) if (rule.test(heading)) return name
-  for (const [name, rule] of CATEGORY_RULES) if (rule.test(body)) return name
-  return 'General'
 }
 
 // A CommonMark code fence: it opens on 3+ backticks or tildes and closes only
@@ -112,8 +90,7 @@ export const splitBlocks = (text: string, file: string): Block[] => {
     const body = part.lines.join('\n')
     if (part.level === 0 && body.trim() === '') continue
     while (stack.length > 0 && (stack[stack.length - 1]?.level ?? 0) >= part.level && part.level > 0) stack.pop()
-    const mark = MODEL_MARK.exec(body)?.[1]
-    const own = mark !== undefined ? modelsIn(mark) : modelsIn(part.heading)
+    const own = modelsIn(part.heading)
     const inherited = stack.length > 0 ? (stack[stack.length - 1]?.models ?? []) : []
     const models = own.length > 0 ? own : inherited
     if (part.level > 0) stack.push({ level: part.level, models })
@@ -124,7 +101,6 @@ export const splitBlocks = (text: string, file: string): Block[] => {
       level: part.level,
       text: body.replace(/\s+$/, ''),
       models,
-      category: categoryOf(part.heading, body),
     })
   }
   return blocks

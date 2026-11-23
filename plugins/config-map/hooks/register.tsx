@@ -155,9 +155,23 @@ const filesMarkdown = (s: Scan): string => {
   return lines.join('\n')
 }
 
+// "L17-19", or "L5" for a one-line block.
+const lineRange = (b: Block) => {
+  const last = b.line + b.text.split('\n').length - 1
+  return last > b.line ? `L${b.line}-${last}` : `L${b.line}`
+}
+
+const settingsMarkdown = (s: Scan): string => {
+  const lines = ['| Scope | File | Keys |', '|---|---|--:|']
+  for (const f of s.settings) {
+    lines.push(`| ${f.source} | \`${cell(shortPath(f.path, s.home))}\` | ${f.keys.length > 0 ? f.keys.length : 'empty or absent'} |`)
+  }
+  return lines.join('\n')
+}
+
 const HINT =
-  'Tag a block for a model with `<!-- model: opus-5.5 -->` under its heading, or name the model in the heading. ' +
-  "Set a category with `<!-- category: Git -->`. To drop a model's blocks in one step, move them into their own file and `@import` it from CLAUDE.md."
+  'A heading that names a model (`# Opus 5.5 tuning`) tags its block and the headings under it. ' +
+  "To drop a model's blocks in one step, move them into their own file and `@import` it from CLAUDE.md."
 
 async function refresh($: EngineInterface): Promise<Scan> {
   const s = await scan($)
@@ -279,13 +293,15 @@ export const register: Register = on => {
             Settings configure Claude Code; the model does not read them. Unfold a key to see its value. Env values and
             secret-looking keys show as •••.
           </Text>
-          {s.settings.map(f => (
-            <Box flexDirection="column">
-              <Text bold>{`${f.source} · ${shortPath(f.path, s.home)}`}</Text>
-              {f.keys.length === 0 ? <Text dimColor>empty or absent</Text> : null}
-              {f.keys.map(k => row(`s:${f.source}:${k.key}`, k.key, k.summary, k.json, 'json'))}
-            </Box>
-          ))}
+          <Markdown text={settingsMarkdown(s)} />
+          {s.settings
+            .filter(f => f.keys.length > 0)
+            .map(f => (
+              <Box flexDirection="column">
+                <Text bold>{`${f.source} · ${shortPath(f.path, s.home)}`}</Text>
+                {f.keys.map(k => row(`s:${f.source}:${k.key}`, k.key, k.summary, k.json, 'json'))}
+              </Box>
+            ))}
           {errors}
         </Box>
       )
@@ -321,7 +337,7 @@ export const register: Register = on => {
                 const model = b.models.length > 0 ? b.models.join(', ') : 'any model'
                 const warn = isForOtherModel(b, now) ? ' ⚠' : ''
                 const title = `${'  '.repeat(Math.max(0, b.level - 1))}${b.heading}`
-                return row(`b:${b.file}:${b.line}`, title, `${b.category} · ${model}${warn}`, b.text, 'markdown', b.line)
+                return row(`b:${b.file}:${b.line}`, title, `${lineRange(b)} · ${model}${warn}`, b.text, 'markdown', b.line)
               })}
             </Box>
           )
