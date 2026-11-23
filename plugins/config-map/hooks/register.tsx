@@ -140,7 +140,7 @@ const filesMarkdown = (s: Scan): string => {
   const other = s.blocks.filter(b => isForOtherModel(b, now)).length
   const always = s.files.filter(f => !f.onDemand).length
   const lines = [
-    `${plural(always, 'file')} load every session` +
+    `${plural(always, 'file')} ${always === 1 ? 'loads' : 'load'} every session` +
       (always < s.files.length ? `, ${s.files.length - always} on demand` : '') +
       `. Model now: **${now.length > 0 ? now.join(', ') : s.model}**.` +
       (other > 0 ? ` ⚠ ${plural(other, 'block')} tagged for another model.` : ''),

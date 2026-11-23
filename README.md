@@ -148,6 +148,8 @@ Limits:
 
 `/config-map` scans your configuration and opens a side pane with two tabs. Every row unfolds to its content; **Fold all** closes them.
 
+![config-map: the Instructions tab, a file table and the blocks of ~/.claude/CLAUDE.md with line ranges and model tags](docs/config-map.png)
+
 - **Instructions**: every instruction file that loads (managed, user `CLAUDE.md`, `~/.claude/rules`, project and local `CLAUDE.md`, `.claude/rules`, and each `@import` they pull in), and whether it loads always or on demand (rules with `paths:` frontmatter). Below that, every block of those files, split at headings and grouped by file, with its line range and the model it is for. Unfold a block to read its lines. Blocks tagged for a model other than the one the session runs are marked ⚠, and the **Blocks for** picker shows one model's blocks.
 - **Settings**: a table of the user, project, local, `--settings` and managed settings files with their key counts, read through Claude Code itself, so each platform's paths are covered. Below it, each top-level key shows a one-line summary (`3 allow, 1 deny`, env variable names, hook event names, a short value) and unfolds to its value as JSON. Every `env` value, and any value under a key that reads like a secret (token, secret, password, credential, auth, API key, helper), shows as `•••`.
 

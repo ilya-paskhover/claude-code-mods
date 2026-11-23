@@ -167,7 +167,7 @@ test('/config-map scans a Windows home and draws the pane', async ($, on) => {
   const md = (await ui.find({ type: 'Markdown' })) as { props: { text?: unknown } } | undefined
   const files = String(md?.props.text ?? '')
   expect(files).toMatch(/~\/\.claude\/models\/sonnet\.md/)
-  expect(files).toMatch(/on demand/)
+  expect(files).toMatch(/^3 files load every session, 1 on demand\./)
   expect(files.includes('token')).toBe(false)
   expect(await ui.findAll({ key: 'tab-extras' })).toHaveLength(0)
 
