@@ -4,7 +4,8 @@ export type Block = {
   line: number
   heading: string
   level: number
-  tokens: number
+  // The block's own lines, heading included, as the file has them.
+  text: string
   // Models the block is for: from a `<!-- model: ... -->` marker, a model
   // named in its heading, or a parent heading. Empty: every model.
   models: string[]
@@ -15,16 +16,15 @@ export type Block = {
 export type InstructionFile = {
   path: string
   scope: 'Managed' | 'User' | 'Project' | 'Local' | 'Rule' | 'Import'
-  tokens: number
   onDemand: boolean
   importedBy?: string
 }
 
-export type KeyRow = { key: string; size: number; summary: string }
+// One settings key: a one-line summary, and its value as JSON with env values
+// and secret-looking keys masked.
+export type KeyRow = { key: string; summary: string; json: string }
 
 export type SettingsFile = { source: string; path: string; keys: KeyRow[] }
-
-export type NamedSize = { name: string; source: string; tokens: number }
 
 export type Scan = {
   at: number
@@ -33,16 +33,19 @@ export type Scan = {
   files: InstructionFile[]
   blocks: Block[]
   settings: SettingsFile[]
-  skills: NamedSize[]
-  agents: NamedSize[]
-  mcp: { server: string; tools: number; tokens: number }[]
   errors: string[]
 }
 
-export type Tab = 'instructions' | 'settings' | 'extras'
+export type Tab = 'instructions' | 'settings'
 
 declare module 'claude-code' {
   interface PluginState {
-    'config-map': { scan: Shaped<Scan | null>; tab: Tab; model: string }
+    'config-map': {
+      scan: Shaped<Scan | null>
+      tab: Tab
+      model: string
+      // Unfolded rows: `b:<file>:<line>` for a block, `s:<source>:<key>` for a setting.
+      open: string[]
+    }
   }
 }

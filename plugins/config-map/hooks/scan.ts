@@ -2,18 +2,6 @@
 
 import type { Block, KeyRow } from '../types'
 
-// A rough token count. English runs near 4 characters a token; Cyrillic and
-// other non-ASCII text runs nearer 2. Good enough to rank blocks, not to bill.
-export const tokens = (text: string): number => {
-  let ascii = 0
-  let other = 0
-  for (const ch of text) {
-    if (ch.charCodeAt(0) < 128) ascii++
-    else other++
-  }
-  return Math.ceil(ascii / 4 + other / 2)
-}
-
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/
 const MODEL_MARK = /<!--\s*model\s*:\s*([^>]*?)\s*-->/i
@@ -134,7 +122,7 @@ export const splitBlocks = (text: string, file: string): Block[] => {
       line: part.start,
       heading: part.heading || '(top of file)',
       level: part.level,
-      tokens: tokens(body),
+      text: body.replace(/\s+$/, ''),
       models,
       category: categoryOf(part.heading, body),
     })
@@ -191,10 +179,25 @@ export const isOnDemand = (text: string) => {
   return m !== null && /^paths\s*:/m.test(m[1] ?? '')
 }
 
-// What one settings key holds, never its values: `env` and helper commands
-// may carry secrets, so the pane shows names and counts only.
+// Env values and anything under a secret-looking key are never shown: the
+// pane may be on screen while someone else looks.
+const SECRET = /token|secret|password|passwd|credential|auth|api[-_]?key|helper/i
+export const HIDDEN = '•••'
+
+export const masked = (key: string, value: unknown): unknown => {
+  if (typeof value === 'string') return SECRET.test(key) ? HIDDEN : value
+  if (Array.isArray(value)) return value.map(v => masked(key, v))
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, key === 'env' ? HIDDEN : masked(k, v)]),
+    )
+  }
+  return value
+}
+
+// One settings key: a one-line summary for its row, and its value (masked) as
+// JSON for when the row is unfolded.
 export const describeKey = (key: string, value: unknown): KeyRow => {
-  const size = JSON.stringify(value ?? null).length
   let summary: string
   if (Array.isArray(value)) summary = `${value.length} item${value.length === 1 ? '' : 's'}`
   else if (value !== null && typeof value === 'object') {
@@ -207,29 +210,15 @@ export const describeKey = (key: string, value: unknown): KeyRow => {
     } else if (key === 'hooks') {
       summary = Object.keys(obj).join(', ') || 'none'
     } else if (key === 'env') {
-      summary = `${Object.keys(obj).length} variables`
+      summary = Object.keys(obj).join(', ') || 'none'
     } else if (key === 'enabledPlugins') {
       const on = Object.values(obj).filter(v => v === true).length
       summary = `${on} on, ${Object.keys(obj).length - on} off`
     } else summary = `${Object.keys(obj).length} keys`
-  } else if (key === 'model' || typeof value === 'boolean' || typeof value === 'number') {
-    summary = String(value)
-  } else summary = typeof value === 'string' ? `text, ${value.length} chars` : String(value)
-  return { key, size, summary }
-}
-
-// Groups `mcp__server__tool` names by server.
-export const mcpServers = (tools: readonly { name: string; description: string; mcp: boolean }[]) => {
-  const by = new Map<string, { tools: number; tokens: number }>()
-  for (const t of tools) {
-    if (!t.mcp) continue
-    const server = t.name.split('__')[1] ?? t.name
-    const row = by.get(server) ?? { tools: 0, tokens: 0 }
-    row.tools++
-    row.tokens += tokens(t.name + t.description)
-    by.set(server, row)
-  }
-  return [...by.entries()].map(([server, row]) => ({ server, ...row })).sort((a, b) => b.tokens - a.tokens)
+  } else if (typeof value === 'string') {
+    summary = SECRET.test(key) ? HIDDEN : value.length > 60 ? `${value.slice(0, 57)}...` : value
+  } else summary = String(value)
+  return { key, summary, json: JSON.stringify(masked(key, value), null, 2) ?? 'null' }
 }
 
 export const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\n/g, ' ')
@@ -240,4 +229,3 @@ export const shortPath = (path: string, home: string) => {
   return h !== '' && p.toLowerCase().startsWith(`${h.toLowerCase()}/`) ? `~${p.slice(h.length)}` : p
 }
 
-export const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))

@@ -6,13 +6,13 @@ import {
   describeKey,
   findImports,
   isOnDemand,
+  HIDDEN,
   joinPath,
-  mcpServers,
+  masked,
   modelsIn,
   resolveImport,
   shortPath,
   splitBlocks,
-  tokens,
 } from './scan'
 
 const CLAUDE_MD = `Intro line.
@@ -106,26 +106,17 @@ test('rules with paths frontmatter load on demand', () => {
   expect(isOnDemand('no frontmatter')).toBe(false)
 })
 
-test('settings keys show counts, never values', () => {
-  expect(describeKey('env', { API_KEY: 'sk-secret' }).summary).toBe('1 variables')
+test('settings rows summarize; their values mask env and secret-looking keys', () => {
+  expect(describeKey('env', { API_KEY: 'sk-secret' }).summary).toBe('API_KEY')
+  expect(describeKey('env', { API_KEY: 'sk-secret' }).json.includes('sk-secret')).toBe(false)
   expect(describeKey('permissions', { allow: ['a', 'b'], deny: ['c'] }).summary).toBe('2 allow, 1 deny')
   expect(describeKey('hooks', { Stop: [], PreToolUse: [] }).summary).toBe('Stop, PreToolUse')
-  expect(describeKey('apiKeyHelper', 'cat ~/key').summary).toBe('text, 9 chars')
+  expect(describeKey('apiKeyHelper', 'cat ~/key').summary).toBe(HIDDEN)
   expect(describeKey('model', 'opus').summary).toBe('opus')
-})
-
-test('tokens weigh non-ASCII heavier', () => {
-  expect(tokens('abcd')).toBe(1)
-  expect(tokens('абвг')).toBe(2)
-})
-
-test('MCP tools group by server', () => {
-  const rows = mcpServers([
-    { name: 'mcp__github__get_me', description: 'x', mcp: true },
-    { name: 'mcp__github__list', description: 'y', mcp: true },
-    { name: 'Bash', description: 'z', mcp: false },
-  ])
-  expect(rows.map(r => [r.server, r.tools])).toEqual([['github', 2]])
+  expect(masked('mcp', { github: { headers: { Authorization: 'Bearer x' }, url: 'u' } })).toEqual({
+    github: { headers: { Authorization: HIDDEN }, url: 'u' },
+  })
+  expect(JSON.parse(describeKey('permissions', { allow: ['Bash(ls)'] }).json)).toEqual({ allow: ['Bash(ls)'] })
 })
 
 const PANE = {
@@ -169,8 +160,6 @@ test('/config-map scans a Windows home and draws the pane', async ($, on) => {
   on('settings.read', (_, e) =>
     ({ value: (e as { source?: string }).source === 'user' ? { env: { TOKEN: 'secret-value' }, model: 'opus' } : {} }),
   )
-  on('command.list', () => ({ value: [{ name: 'note', description: 'Save a note', source: 'plugin', plugin: 'notes' }] }))
-  on('tool.list', () => ({ value: [{ name: 'mcp__github__get_me', description: 'Me', mcp: true }] }))
   on('command.register', () => ({ value: { command: 'config-map' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -178,21 +167,34 @@ test('/config-map scans a Windows home and draws the pane', async ($, on) => {
   await $.session.start({ cwd: 'C:\\work\\app', surface: 'desktop', isInteractive: true })
   const ran = await $.command.run({ command: 'config-map', args: '' } as never)
   const text = (ran as { text?: string }).text ?? ''
-  expect(text).toMatch(/4 instruction files, 5 blocks/)
+  expect(text).toMatch(/4 instruction files, 5 blocks\./)
   expect(text).toMatch(/tagged for a model other than Sonnet 5\.5/)
+  expect(text.includes('token')).toBe(false)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const md = (await ui.find({ type: 'Markdown' })) as { props: { text?: unknown } } | undefined
-  const body = String(md?.props.text ?? '')
-  expect(body).toMatch(/~\/\.claude\/models\/sonnet\.md/)
-  expect(body).toMatch(/on demand/)
-  expect(body).toMatch(/Opus 5\.5 ⚠/)
+  const files = String(md?.props.text ?? '')
+  expect(files).toMatch(/~\/\.claude\/models\/sonnet\.md/)
+  expect(files).toMatch(/on demand/)
+  expect(files.includes('token')).toBe(false)
+  expect(await ui.findAll({ key: 'tab-extras' })).toHaveLength(0)
+
+  // A block row folds and unfolds to show the block's own lines.
+  const opusRow = 'b:C:/Users/dev/.claude/CLAUDE.md:4'
+  expect((await ui.find({ key: opusRow }))?.text).toMatch(/Opus 5\.5 tuning.*Opus 5\.5 ⚠/)
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  await ui.press({ key: opusRow })
+  expect(String((await ui.find({ type: 'Code' }))?.props.source)).toBe('# Opus 5.5 tuning\nFocus.\n\n@models/sonnet.md')
+  await ui.press({ key: 'fold' })
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
 
   await ui.press({ key: 'tab-settings' })
-  const md2 = (await ui.find({ type: 'Markdown' })) as { props: { text?: unknown } } | undefined
-  const settings = String(md2?.props.text ?? '')
-  expect(settings).toMatch(/1 variables/)
-  expect(settings.includes('secret-value')).toBe(false)
+  expect((await ui.find({ key: 's:user:env' }))?.text).toMatch(/TOKEN/)
+  await ui.press({ key: 's:user:env' })
+  const env = String((await ui.find({ type: 'Code' }))?.props.source)
+  expect(env).toMatch(/TOKEN/)
+  expect(env.includes('secret-value')).toBe(false)
+  expect(JSON.stringify(await ui.drawn()).includes('secret-value')).toBe(false)
   await ui.unmount()
 })
 
@@ -220,7 +222,7 @@ test('a file opening with a horizontal rule keeps its text', () => {
   const text = '---\nIntro paragraph.\n---\n# Heading\nBody.'
   const blocks = splitBlocks(text, 'f')
   expect(blocks[0]?.heading).toBe('(top of file)')
-  expect(blocks[0]?.tokens).toBeGreaterThan(3)
+  expect(blocks[0]?.text).toBe('---\nIntro paragraph.\n---')
   // Real frontmatter is still dropped.
   expect(splitBlocks('---\npaths:\n  - "a"\n---\n# H\nx', 'f').map(b => b.heading)).toEqual(['H'])
 })
@@ -238,8 +240,6 @@ const late = (on: On) => {
   on('session.root', () => ({ value: '/work' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('settings.read', () => ({ value: {} }))
-  on('command.list', () => ({ value: [] }))
-  on('tool.list', () => ({ value: [] }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   const registered: string[] = []
   on('command.register', (_, e) => {

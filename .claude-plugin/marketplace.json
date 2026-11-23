@@ -24,7 +24,7 @@
     {
       "name": "config-map",
       "source": "./plugins/config-map",
-      "description": "A side pane mapping your CLAUDE.md blocks, settings, skills and MCP servers by size, category and model."
+      "description": "A side pane mapping your CLAUDE.md blocks and settings keys, each unfolding to its content."
     }
   ]
 }
