@@ -7,6 +7,7 @@ Small mods for [Claude Code](https://claude.com/claude-code), built on its funct
 | [turn-pulse](plugins/turn-pulse) | A status line summarizing the last turn, live while Claude works, with an optional band above the prompt. |
 | [notes](plugins/notes) | `/note` saves chat text to a notes list shared across projects; `/notes` opens it in a side pane. |
 | [sessions](plugins/sessions) | `/sessions` opens a side pane listing the sessions running on this machine and whether each is working or idle. |
+| [config-map](plugins/config-map) | `/config-map` opens a side pane mapping your Claude Code config: every CLAUDE.md block by file, line range and model, and every settings key per file, each unfolding to its content. |
 
 > **Early access.** The mod API these use is marked EARLY ACCESS and may change between Claude Code releases. Built and tested on Claude Code 2.1.293, on Windows, in the desktop app's Code tab.
 
@@ -30,6 +31,10 @@ claude plugin install notes@claude-code-mods
 
 ```
 claude plugin install sessions@claude-code-mods
+```
+
+```
+claude plugin install config-map@claude-code-mods
 ```
 
 This installs in the user scope, so the mod loads in every new session, including sessions the desktop app starts. Inside an interactive `claude` session, `/plugin marketplace add` and `/plugin install` take the same arguments. `/plugin` is not available inside the desktop app's Code tab, so install from a terminal.
@@ -138,6 +143,25 @@ Limits:
 - In the desktop app, a click on the pane first gives it focus, so a button may need two clicks: one to focus the pane, one to press. The pane opens focused, so the first click right after `/sessions` works; after you click elsewhere, click anywhere in the pane (or Refresh) first. Press Esc to give the keyboard back to the prompt.
 - Sessions and Notes open as tabs in the same side pane; mod panes can't be shown side by side. Tracked in [#5](https://github.com/ilya-paskhover/claude-code-mods/issues/5).
 - A session that crashed can leave its file behind. The session file only changes when the status changes, so a "working" row shows dimmed as "working?" once it has been busy for 30 minutes: either a long turn or a crash. The pane can't tell which.
+
+## config-map
+
+`/config-map` scans your configuration and opens a side pane with two tabs. Every row unfolds to its content; **Fold all** closes them.
+
+![config-map: the Instructions tab, a file table and the blocks of ~/.claude/CLAUDE.md with line ranges and model tags](docs/config-map.png)
+
+- **Instructions**: every instruction file that loads (managed, user `CLAUDE.md`, `~/.claude/rules`, project and local `CLAUDE.md`, `.claude/rules`, and each `@import` they pull in), and whether it loads always or on demand (rules with `paths:` frontmatter). Below that, every block of those files, split at headings and grouped by file, with its line range and the model it is for. Unfold a block to read its lines. Blocks tagged for a model other than the one the session runs are marked ⚠, and the **Blocks for** picker shows one model's blocks.
+- **Settings**: a table of the user, project, local, `--settings` and managed settings files with their key counts, read through Claude Code itself, so each platform's paths are covered. Below it, each top-level key shows a one-line summary (`3 allow, 1 deny`, env variable names, hook event names, a short value) and unfolds to its value as JSON. Every `env` value, and any value under a key that reads like a secret (token, secret, password, credential, auth, API key, helper), shows as `•••`.
+
+Tagging blocks. A heading that names a model (`# Opus 5.5 tuning`, `## Sonnet 5.5 additions`, `claude-opus-5-5`) tags its block and the headings nested under it. A heading can name several.
+
+To drop a model's blocks in one step when you switch models, move them to their own file, say `~/.claude/models/opus-5.5.md`, and add `@models/opus-5.5.md` to `~/.claude/CLAUDE.md`. Removing that one line drops them all, and the pane shows the imported file as its own row.
+
+Limits:
+
+- Your claude.ai profile preferences and the system prompt are not files on disk, so the pane does not list them.
+- Masking goes by key name: a secret written inside an ordinary value (a token in a hook's command line, say) shows when that key is unfolded.
+- The scan runs when you type `/config-map` or press Refresh, not on every change.
 
 ## Developing
 
