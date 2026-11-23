@@ -245,7 +245,9 @@ export const mergeHistory = (kept: History, found: readonly SessionRow[], at: nu
 }
 
 // nestRows' order with each row's count of sessions under it, leaving out the
-// rows under a folded one.
+// rows under a folded one. folded holds what the person chose; a row they
+// haven't toggled starts folded when it and every session under it has ended,
+// so a live session is never hidden by default.
 export const foldRows = (nested: readonly { row: SessionRow; depth: number }[], folded: Readonly<Record<string, boolean>>) => {
   const shown: { row: SessionRow; depth: number; under: number; isFolded: boolean }[] = []
   let hideBelow: number | undefined
@@ -254,7 +256,8 @@ export const foldRows = (nested: readonly { row: SessionRow; depth: number }[], 
     hideBelow = undefined
     let under = 0
     while (i + under + 1 < nested.length && nested[i + under + 1]!.depth > depth) under++
-    const isFolded = under > 0 && folded[row.id] === true
+    const isAllEnded = row.status === 'ended' && nested.slice(i + 1, i + 1 + under).every(n => n.row.status === 'ended')
+    const isFolded = under > 0 && (folded[row.id] ?? isAllEnded)
     if (isFolded) hideBelow = depth
     shown.push({ row, depth, under, isFolded })
   })

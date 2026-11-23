@@ -647,6 +647,24 @@ test('folding hides the sessions under a row and counts them', () => {
   expect(shape({ 's-5': true })).toEqual(shape({}))
 })
 
+test('an ended session starts folded unless a session under it is still live', () => {
+  const row = (pid: number, status: string, parent?: number) => ({
+    ...parseSession(file(pid, {}))!,
+    status,
+    parent: parent === undefined ? undefined : `s-${parent}`,
+  })
+  const shape = (rows: ReturnType<typeof row>[], folded: Record<string, boolean> = {}) =>
+    foldRows(nestRows(rows), folded).map(n => [n.row.pid, n.isFolded])
+  const allEnded = [row(1, 'ended'), row(2, 'ended', 1), row(3, 'ended', 2)]
+  expect(shape(allEnded)).toEqual([[1, true]])
+  // Unfolded by the person, the ended child below still starts folded.
+  expect(shape(allEnded, { 's-1': false })).toEqual([[1, false], [2, true]])
+  expect(shape(allEnded, { 's-1': false, 's-2': false })).toEqual([[1, false], [2, false], [3, false]])
+  // A live grandchild keeps the whole branch open.
+  expect(shape([row(1, 'ended'), row(2, 'ended', 1), row(3, 'idle', 2)])).toEqual([[1, false], [2, false], [3, false]])
+  expect(shape([row(1, 'idle'), row(2, 'ended', 1)])).toEqual([[1, false], [2, false]])
+})
+
 test('the header counts each status with its row dot and color, ended last', () => {
   const row = (pid: number, status: string, updatedAt = NOW) => ({ ...parseSession(file(pid, { status, updatedAt }))!, status })
   const rows = [row(1, 'ended'), row(2, 'idle'), row(3, 'busy', NOW - STALE_MS - 1), row(4, 'idle'), row(5, 'paused')]
